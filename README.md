@@ -36,7 +36,7 @@ Mint a Tailscale pre-auth key in the admin console:
 Then on the Wyse console:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/raylu-ai/tv-kiosk/main/install.sh \
+curl -fsSL https://raw.githubusercontent.com/raylu-dev/tv-kiosk/main/install.sh \
   | sudo TS_AUTHKEY=tskey-auth-... KIOSK_URL=https://raylove.raylu.ai/tv bash
 ```
 
@@ -72,7 +72,7 @@ restart:   sudo systemctl restart kiosk
 reboot:    sudo reboot
 logs:      journalctl -u kiosk -n 200
 mac:       __:__:__:__:__:__     (fill in after BIOS)
-repo:      github.com/raylu-ai/tv-kiosk
+repo:      github.com/raylu-dev/tv-kiosk
 ```
 
 See [`runbook.md`](runbook.md) for everything else (rotation fix, side cron jobs, recovery, TV settings).

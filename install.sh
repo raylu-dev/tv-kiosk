@@ -3,7 +3,7 @@
 # One-shot, idempotent. Re-run anytime to converge config back to the source of truth here.
 #
 # Usage (after fresh Debian install, with `kiosk` user already created):
-#   curl -fsSL https://raw.githubusercontent.com/raylu-ai/tv-kiosk/main/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/raylu-dev/tv-kiosk/main/install.sh \
 #     | sudo TS_AUTHKEY=tskey-auth-... KIOSK_URL=https://... bash
 #
 # Or paste the file directly and:
