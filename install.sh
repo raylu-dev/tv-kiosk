@@ -14,7 +14,9 @@
 
 set -euo pipefail
 
-: "${TS_AUTHKEY:?Set TS_AUTHKEY (Tailscale pre-auth key, tag:kiosk)}"
+# TS_AUTHKEY only required on first run; once the box is on the tailnet,
+# re-running install.sh skips Tailscale registration.
+TS_AUTHKEY="${TS_AUTHKEY:-}"
 : "${KIOSK_URL:?Set KIOSK_URL (e.g. https://example.com)}"
 
 KIOSK_HOSTNAME="${KIOSK_HOSTNAME:-tv-kiosk}"
@@ -154,11 +156,15 @@ phase_kiosk_service() {
   local kiosk_uid
   kiosk_uid="$(id -u "$KIOSK_USER")"
 
+  # The TTYPath + Conflicts=getty@tty1 binding is REQUIRED. Without it the
+  # PAM session has no seat, cage can't grab DRM, and the whole stack hangs
+  # silently with active processes but no display output.
   cat > /etc/systemd/system/kiosk.service <<EOF
 [Unit]
 Description=TV kiosk (cage + brave)
-After=network-online.target systemd-user-sessions.service
+After=systemd-user-sessions.service plymouth-quit-wait.service getty@tty1.service network-online.target
 Wants=network-online.target
+Conflicts=getty@tty1.service
 
 [Service]
 Type=simple
@@ -168,8 +174,18 @@ PAMName=login
 WorkingDirectory=/home/${KIOSK_USER}
 EnvironmentFile=/etc/kiosk-url.env
 Environment=XDG_RUNTIME_DIR=/run/user/${kiosk_uid}
+Environment=XDG_SESSION_TYPE=wayland
 Environment=WLR_LIBINPUT_NO_DEVICES=1
 Environment=WLR_OUTPUT_TRANSFORM=${KIOSK_ROTATION}
+
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+UnsetEnvironment=TERM
 
 ExecStart=/usr/bin/cage -s -- /usr/bin/brave-browser \\
   --kiosk \\
@@ -323,6 +339,12 @@ phase_tailscale() {
     curl -fsSL https://tailscale.com/install.sh | sh
   fi
   systemctl enable --now tailscaled
+  # Skip if already on the tailnet (single-use auth keys can't be re-redeemed).
+  if tailscale status --json 2>/dev/null | grep -q '"BackendState":"Running"'; then
+    log "Tailscale already running, skipping 'tailscale up'"
+    return 0
+  fi
+  [ -n "$TS_AUTHKEY" ] || { echo "TS_AUTHKEY required for first-time Tailscale setup"; exit 1; }
   tailscale up \
     --ssh \
     --hostname="$KIOSK_HOSTNAME" \
@@ -340,8 +362,10 @@ phase_firewall() {
 }
 
 phase_enable() {
-  log "Enabling services"
+  log "Enabling services (and disabling getty@tty1 since kiosk takes that TTY)"
   systemctl daemon-reload
+  systemctl disable getty@tty1.service 2>/dev/null || true
+  systemctl stop getty@tty1.service 2>/dev/null || true
   systemctl enable kiosk-watchdog.timer
   systemctl enable kiosk-nightly-reboot.timer
   systemctl enable kiosk.service
