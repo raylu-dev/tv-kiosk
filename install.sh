@@ -299,6 +299,31 @@ WantedBy=timers.target
 EOF
 }
 
+phase_periodic_reload() {
+  log "Installing 30-min page-refresh timer (so dashboard changes propagate)"
+  cat > /etc/systemd/system/kiosk-reload.service <<'EOF'
+[Unit]
+Description=Refresh the kiosk by restarting the kiosk service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart kiosk.service
+EOF
+
+  cat > /etc/systemd/system/kiosk-reload.timer <<'EOF'
+[Unit]
+Description=Refresh the kiosk page every 30 minutes
+
+[Timer]
+OnBootSec=30min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+
 phase_nightly_reboot() {
   log "Installing nightly reboot timer (04:30)"
   cat > /etc/systemd/system/kiosk-nightly-reboot.service <<'EOF'
@@ -367,6 +392,7 @@ phase_enable() {
   systemctl disable getty@tty1.service 2>/dev/null || true
   systemctl stop getty@tty1.service 2>/dev/null || true
   systemctl enable kiosk-watchdog.timer
+  systemctl enable kiosk-reload.timer
   systemctl enable kiosk-nightly-reboot.timer
   systemctl enable kiosk.service
 }
@@ -382,6 +408,7 @@ main() {
   phase_slices
   phase_kiosk_service
   phase_watchdog
+  phase_periodic_reload
   phase_nightly_reboot
   phase_sshd
   # Tailscale BEFORE ufw lock-down: if anything fails earlier, you can still
