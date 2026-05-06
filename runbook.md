@@ -4,7 +4,7 @@ Operational guide for the office TV kiosk. The README covers install. This cover
 
 ## Architecture in 30 seconds
 
-- **Display stack:** systemd unit `kiosk.service` runs `cage` (Wayland compositor) which spawns `chromium --kiosk`. If chromium crashes, cage exits, systemd restarts the unit. `systemctl status kiosk` reflects actual display health.
+- **Display stack:** systemd unit `kiosk.service` runs `cage` (Wayland compositor) which spawns `brave-browser --kiosk`. If Brave crashes, cage exits, systemd restarts the unit. `systemctl status kiosk` reflects actual display health. Brave is used instead of Chromium because Ubuntu ships Chromium only as a snap.
 - **Watchdog:** `kiosk-watchdog.timer` fires every 5 minutes. Checks origin reachability, chromium devtools, and that the page isn't on a `chrome-error://` screen. One failure → restart kiosk. Two consecutive failures → reboot.
 - **Nightly reboot:** `kiosk-nightly-reboot.timer` reboots at 04:30. Unattended-upgrades runs at 04:00 and may also reboot. Either way, the box gets a fresh start daily.
 - **Resource isolation:** `kiosk.slice` reserves CPU/memory for the display. `sidejobs.slice` caps anything else. Side jobs literally cannot starve the TV.
@@ -74,6 +74,10 @@ wakeonlan <mac>     # from any LAN machine
 ### TV shows "Aw, Snap" or chrome-error page
 
 Watchdog will catch this within 5 minutes and restart kiosk. To force immediately: `sudo systemctl restart kiosk`. If it persists, the upstream URL is probably down — check from your Mac.
+
+### Brave shows a welcome / onboarding page instead of the URL
+
+Should not happen — `--no-first-run --no-default-browser-check` plus the `PromotionalTabsEnabled=false` policy in `/etc/brave/policies/managed/kiosk.json` suppress all of it. If it does: check that file exists, run `sudo systemctl restart kiosk`. If still broken, blow away Brave's profile: `sudo rm -rf /home/kiosk/.config/BraveSoftware && sudo systemctl restart kiosk`.
 
 ### Image is rotated wrong / sideways / upside-down
 

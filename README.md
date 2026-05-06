@@ -1,6 +1,8 @@
 # tv-kiosk
 
-Office TV kiosk on a Wyse 5070. Boots, displays a URL, restarts itself when broken, reboots itself nightly. SSH access via Tailscale.
+Office TV kiosk on a Wyse 5070. Ubuntu Server 24.04 + cage (Wayland compositor) + Brave in `--kiosk` mode. Restarts itself when broken, reboots itself nightly. SSH access via Tailscale.
+
+Brave is used instead of Chromium because Ubuntu only ships Chromium as a snap, which is hostile to Wayland/cage kiosks.
 
 ## Initial install (one time, ~25 min total)
 
@@ -15,14 +17,20 @@ Boot into BIOS (Del or F2):
 
 Plug in ethernet (not Wi-Fi). Surge protector recommended.
 
-### 2. Debian 12 minimal (10 min, needs keyboard)
+### 2. Ubuntu Server 24.04 (10 min, needs keyboard)
 
-Flash `debian-12-netinst-amd64.iso` to USB on your Mac. Boot the Wyse from USB. Install:
+Flash `ubuntu-24.04.x-live-server-amd64.iso` to USB on your Mac. Boot the Wyse from USB. Install with the **subiquity** installer:
 
-- No desktop environment, no print server
-- Standard system utilities + SSH server
-- Create user `kiosk` with a temporary password (you won't use it after install)
-- Let it install GRUB to the eMMC
+- Language: English
+- Keyboard: defaults
+- Install type: **Ubuntu Server** (NOT minimized)
+- Network: DHCP if your office allows it; otherwise pick "Edit IPv4" → Manual and set static
+- Mirror: defaults
+- Storage: **Use entire disk** (the eMMC, ~32GB) → no LVM
+- Profile: name=`kiosk`, server name=`tv-kiosk`, username=`kiosk`, password=anything (you won't use it after install)
+- Skip Ubuntu Pro
+- **Install OpenSSH server**: yes
+- Featured snaps: skip all
 
 Reboot, log in once on the console as `kiosk`.
 

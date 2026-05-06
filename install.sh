@@ -1,8 +1,11 @@
 #!/bin/bash
-# tv-kiosk installer — Debian 12 minimal → cage+chromium kiosk on Tailscale.
+# tv-kiosk installer — Ubuntu Server 24.04 → cage+brave kiosk on Tailscale.
 # One-shot, idempotent. Re-run anytime to converge config back to the source of truth here.
 #
-# Usage (after fresh Debian install, with `kiosk` user already created):
+# Brave is used instead of Chromium because Ubuntu ships Chromium only as a snap,
+# which is hostile to Wayland/cage kiosks.
+#
+# Usage (after fresh Ubuntu install, with `kiosk` user already created):
 #   curl -fsSL https://raw.githubusercontent.com/raylu-dev/tv-kiosk/main/install.sh \
 #     | sudo TS_AUTHKEY=tskey-auth-... KIOSK_URL=https://... bash
 #
@@ -25,25 +28,60 @@ WATCHDOG_WEBHOOK="${WATCHDOG_WEBHOOK:-}"
 log() { printf '\n==> %s\n' "$*"; }
 
 phase_packages() {
-  log "Installing packages"
+  log "Installing base packages"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y --no-install-recommends \
-    cage chromium \
+    cage \
     openssh-server \
     curl ca-certificates gnupg \
     ufw unattended-upgrades \
-    jq wakeonlan \
+    jq wakeonlan etherwake \
     tmux htop
+
+  log "Adding Brave apt repo + installing brave-browser"
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg \
+    -o /etc/apt/keyrings/brave-browser-archive-keyring.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" \
+    > /etc/apt/sources.list.d/brave-browser-release.list
+  apt-get update -y
+  apt-get install -y --no-install-recommends brave-browser
+}
+
+phase_brave_policies() {
+  log "Installing Brave managed policies (disable Rewards/Wallet/News/AI/etc.)"
+  install -d -m 0755 /etc/brave/policies/managed
+  cat > /etc/brave/policies/managed/kiosk.json <<'EOF'
+{
+  "BraveRewardsDisabled": true,
+  "BraveWalletDisabled": true,
+  "BraveAIChatEnabled": false,
+  "BraveVPNDisabled": true,
+  "BraveNewsDisabled": true,
+  "BraveTalkDisabled": true,
+  "BraveSyncDisabled": true,
+  "TorDisabled": true,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "PasswordManagerEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "MetricsReportingEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "BackgroundModeEnabled": false
+}
+EOF
 }
 
 phase_user() {
   log "Ensuring user $KIOSK_USER"
   id "$KIOSK_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$KIOSK_USER"
-  # Debian's PAM ships a rule that lets users in `nopasswdlogin` skip password
-  # prompts. Adding kiosk lets PAMName=login succeed without a password.
+  # Ubuntu/Debian PAM ships a rule that lets users in `nopasswdlogin` skip
+  # password prompts. Adding kiosk lets PAMName=login succeed without a password.
   getent group nopasswdlogin >/dev/null || groupadd --system nopasswdlogin
-  usermod -aG nopasswdlogin,video,input,render,tty "$KIOSK_USER"
+  for grp in nopasswdlogin video input render tty; do
+    getent group "$grp" >/dev/null && usermod -aG "$grp" "$KIOSK_USER" || true
+  done
 }
 
 phase_hostname() {
@@ -68,10 +106,15 @@ EOF
 phase_unattended_upgrades() {
   log "Configuring unattended-upgrades + 04:00 reboot"
   cat > /etc/apt/apt.conf.d/50unattended-upgrades <<'EOF'
+Unattended-Upgrade::Allowed-Origins {
+  "${distro_id}:${distro_codename}";
+  "${distro_id}:${distro_codename}-security";
+  "${distro_id}ESMApps:${distro_codename}-apps-security";
+  "${distro_id}ESM:${distro_codename}-infra-security";
+  "${distro_id}:${distro_codename}-updates";
+};
 Unattended-Upgrade::Origins-Pattern {
-  "origin=Debian,codename=${distro_codename},label=Debian";
-  "origin=Debian,codename=${distro_codename},label=Debian-Security";
-  "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+  "origin=Brave Software";
 };
 Unattended-Upgrade::Automatic-Reboot "true";
 Unattended-Upgrade::Automatic-Reboot-Time "04:00";
@@ -113,7 +156,7 @@ phase_kiosk_service() {
 
   cat > /etc/systemd/system/kiosk.service <<EOF
 [Unit]
-Description=TV kiosk (cage + chromium)
+Description=TV kiosk (cage + brave)
 After=network-online.target systemd-user-sessions.service
 Wants=network-online.target
 
@@ -128,7 +171,7 @@ Environment=XDG_RUNTIME_DIR=/run/user/${kiosk_uid}
 Environment=WLR_LIBINPUT_NO_DEVICES=1
 Environment=WLR_OUTPUT_TRANSFORM=${KIOSK_ROTATION}
 
-ExecStart=/usr/bin/cage -s -- /usr/bin/chromium \\
+ExecStart=/usr/bin/cage -s -- /usr/bin/brave-browser \\
   --kiosk \\
   --ozone-platform=wayland \\
   --enable-features=UseOzonePlatform \\
@@ -140,9 +183,10 @@ ExecStart=/usr/bin/cage -s -- /usr/bin/chromium \\
   --disable-pinch \\
   --overscroll-history-navigation=0 \\
   --no-first-run \\
+  --no-default-browser-check \\
   --check-for-update-interval=31536000 \\
   --incognito \\
-  --disk-cache-dir=/tmp/chromium-cache \\
+  --disk-cache-dir=/tmp/brave-cache \\
   --disk-cache-size=104857600 \\
   --remote-debugging-port=9222 \\
   --remote-debugging-address=127.0.0.1 \\
@@ -161,6 +205,9 @@ phase_watchdog() {
   log "Installing watchdog"
   cat > /usr/local/bin/kiosk-watchdog.sh <<'WATCHDOG'
 #!/bin/bash
+# Verifies origin reachability + browser health every 5 min. One fail restarts
+# kiosk; two consecutive fails reboot. Browser is Brave (Chromium-based, so the
+# devtools protocol on :9222 is identical to Chromium).
 set -u
 URL="$(grep -oP '(?<=KIOSK_URL=).*' /etc/kiosk-url.env)"
 WEBHOOK_FILE=/etc/kiosk-watchdog.env
@@ -302,6 +349,7 @@ phase_enable() {
 
 main() {
   phase_packages
+  phase_brave_policies
   phase_user
   phase_hostname
   phase_emmc_preserve
