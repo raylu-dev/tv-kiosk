@@ -4,7 +4,7 @@ Operational guide for the office TV kiosk. The README covers install. This cover
 
 ## Architecture in 30 seconds
 
-- **Display stack:** systemd unit `kiosk.service` runs `cage` (Wayland compositor) which spawns `brave-browser --kiosk`. If Brave crashes, cage exits, systemd restarts the unit. `systemctl status kiosk` reflects actual display health. Brave is used instead of Chromium because Ubuntu ships Chromium only as a snap.
+- **Display stack:** systemd unit `kiosk.service` runs `weston` (Wayland compositor) with `kiosk-shell.so`, which auto-launches `brave-browser --kiosk` via `/usr/local/bin/kiosk-launch.sh`. Config in `/etc/weston/weston.ini`. If Brave crashes, weston exits (`watch=true`), systemd restarts the unit. `systemctl status kiosk` reflects actual display health. Brave is used instead of Chromium because Ubuntu ships Chromium only as a snap. Weston is used instead of cage because Ubuntu's cage 0.1.5 lacks output rotation support.
 - **Watchdog:** `kiosk-watchdog.timer` fires every 5 minutes. Checks origin reachability, chromium devtools, and that the page isn't on a `chrome-error://` screen. One failure → restart kiosk. Two consecutive failures → reboot.
 - **Nightly reboot:** `kiosk-nightly-reboot.timer` reboots at 04:30. Unattended-upgrades runs at 04:00 and may also reboot. Either way, the box gets a fresh start daily.
 - **Resource isolation:** `kiosk.slice` reserves CPU/memory for the display. `sidejobs.slice` caps anything else. Side jobs literally cannot starve the TV.
@@ -81,21 +81,16 @@ Should not happen — `--no-first-run --no-default-browser-check` plus the `Prom
 
 ### Image is rotated wrong / sideways / upside-down
 
-The rotation is controlled by `WLR_OUTPUT_TRANSFORM` in `/etc/systemd/system/kiosk.service`. Values:
+Edit `transform=` in `/etc/weston/weston.ini` under `[output]`. Valid values:
 
-- `0` — no rotation (landscape)
-- `1` — 90° clockwise
-- `2` — 180° (upside-down)
-- `3` — 270° clockwise (= 90° counter-clockwise)
+- `normal` — no rotation
+- `rotate-90` — 90° clockwise (top of screen on the right as you face it)
+- `rotate-180` — upside down
+- `rotate-270` — 90° counter-clockwise (top of screen on the left)
 
-Edit, then:
+Then `sudo systemctl restart kiosk`. No daemon-reload needed (weston re-reads its config on start).
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart kiosk
-```
-
-If `cage` errors out on the env var (older versions ignore it), pass it as a flag instead: change `cage -s --` to `cage -s -r 3 --`. Requires cage ≥ 0.1.5; install from `bookworm-backports` if needed.
+Our office TV is on `rotate-90` (mounted vertically with the bottom of the screen on the left).
 
 ### Tailscale is down, can't SSH
 

@@ -1,9 +1,12 @@
 #!/bin/bash
-# tv-kiosk installer — Ubuntu Server 24.04 → cage+brave kiosk on Tailscale.
+# tv-kiosk installer — Ubuntu Server 24.04 → weston+brave kiosk on Tailscale.
 # One-shot, idempotent. Re-run anytime to converge config back to the source of truth here.
 #
 # Brave is used instead of Chromium because Ubuntu ships Chromium only as a snap,
-# which is hostile to Wayland/cage kiosks.
+# which is hostile to Wayland kiosks. Weston (with kiosk-shell) is used instead
+# of cage because Ubuntu's cage 0.1.5 doesn't implement the wlr-output-management
+# protocol, so output rotation has no effect. Weston has native rotation via
+# weston.ini.
 #
 # Usage (after fresh Ubuntu install, with `kiosk` user already created):
 #   curl -fsSL https://raw.githubusercontent.com/raylu-dev/tv-kiosk/main/install.sh \
@@ -21,8 +24,9 @@ TS_AUTHKEY="${TS_AUTHKEY:-}"
 
 KIOSK_HOSTNAME="${KIOSK_HOSTNAME:-tv-kiosk}"
 KIOSK_USER="${KIOSK_USER:-kiosk}"
-# wlroots output transforms: 0=normal, 1=90°CW, 2=180°, 3=270°CW (bottom-on-left).
-KIOSK_ROTATION="${KIOSK_ROTATION:-3}"
+# weston transform values: normal, rotate-90 (90°CW), rotate-180, rotate-270 (90°CCW).
+# Default rotate-90 matches our office TV (mounted vertically, bottom-on-left as you face it).
+KIOSK_TRANSFORM="${KIOSK_TRANSFORM:-rotate-90}"
 WATCHDOG_WEBHOOK="${WATCHDOG_WEBHOOK:-}"
 
 [[ $EUID -eq 0 ]] || { echo "must run as root (use sudo)"; exit 1; }
@@ -34,7 +38,7 @@ phase_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y --no-install-recommends \
-    cage \
+    weston \
     openssh-server \
     curl ca-certificates gnupg \
     ufw unattended-upgrades \
@@ -175,17 +179,65 @@ MemoryMax=2G
 EOF
 }
 
+phase_weston_config() {
+  log "Writing /etc/weston/weston.ini and the brave launcher"
+  mkdir -p /etc/weston
+  cat > /etc/weston/weston.ini <<EOF
+[core]
+shell=kiosk-shell.so
+require-input=false
+idle-time=0
+
+[output]
+name=DP-3
+transform=${KIOSK_TRANSFORM}
+
+[autolaunch]
+path=/usr/local/bin/kiosk-launch.sh
+watch=true
+EOF
+
+  # Brave is invoked via this wrapper because weston's [autolaunch] only
+  # accepts a single binary path — no args. Wrapper sources KIOSK_URL from
+  # /etc/kiosk-url.env so URL changes don't require editing the wrapper.
+  cat > /usr/local/bin/kiosk-launch.sh <<'SCRIPT'
+#!/bin/bash
+. /etc/kiosk-url.env
+exec /usr/bin/brave-browser \
+  --kiosk \
+  --ozone-platform=wayland \
+  --enable-features=UseOzonePlatform \
+  --password-store=basic \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-translate \
+  --disable-features=TranslateUI \
+  --disable-pinch \
+  --overscroll-history-navigation=0 \
+  --no-first-run \
+  --no-default-browser-check \
+  --check-for-update-interval=31536000 \
+  --incognito \
+  --disk-cache-dir=/tmp/brave-cache \
+  --disk-cache-size=104857600 \
+  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
+  "$KIOSK_URL"
+SCRIPT
+  chmod +x /usr/local/bin/kiosk-launch.sh
+}
+
 phase_kiosk_service() {
   log "Installing kiosk.service"
   local kiosk_uid
   kiosk_uid="$(id -u "$KIOSK_USER")"
 
   # The TTYPath + Conflicts=getty@tty1 binding is REQUIRED. Without it the
-  # PAM session has no seat, cage can't grab DRM, and the whole stack hangs
-  # silently with active processes but no display output.
+  # PAM session has no seat, weston can't grab DRM master, and the unit fails
+  # to start with no useful output.
   cat > /etc/systemd/system/kiosk.service <<EOF
 [Unit]
-Description=TV kiosk (cage + brave)
+Description=TV kiosk (weston + brave)
 After=systemd-user-sessions.service plymouth-quit-wait.service getty@tty1.service network-online.target
 Wants=network-online.target
 Conflicts=getty@tty1.service
@@ -199,8 +251,6 @@ WorkingDirectory=/home/${KIOSK_USER}
 EnvironmentFile=/etc/kiosk-url.env
 Environment=XDG_RUNTIME_DIR=/run/user/${kiosk_uid}
 Environment=XDG_SESSION_TYPE=wayland
-Environment=WLR_LIBINPUT_NO_DEVICES=1
-Environment=WLR_OUTPUT_TRANSFORM=${KIOSK_ROTATION}
 
 TTYPath=/dev/tty1
 TTYReset=yes
@@ -211,26 +261,7 @@ StandardOutput=journal
 StandardError=journal
 UnsetEnvironment=TERM
 
-ExecStart=/usr/bin/cage -s -- /usr/bin/brave-browser \\
-  --kiosk \\
-  --ozone-platform=wayland \\
-  --enable-features=UseOzonePlatform \\
-  --password-store=basic \\
-  --noerrdialogs \\
-  --disable-infobars \\
-  --disable-translate \\
-  --disable-features=TranslateUI \\
-  --disable-pinch \\
-  --overscroll-history-navigation=0 \\
-  --no-first-run \\
-  --no-default-browser-check \\
-  --check-for-update-interval=31536000 \\
-  --incognito \\
-  --disk-cache-dir=/tmp/brave-cache \\
-  --disk-cache-size=104857600 \\
-  --remote-debugging-port=9222 \\
-  --remote-debugging-address=127.0.0.1 \\
-  \${KIOSK_URL}
+ExecStart=/usr/bin/weston --config=/etc/weston/weston.ini
 
 Restart=always
 RestartSec=5
@@ -431,6 +462,7 @@ main() {
   phase_unattended_upgrades
   phase_kiosk_url
   phase_slices
+  phase_weston_config
   phase_kiosk_service
   phase_watchdog
   phase_periodic_reload
