@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Money celebration: cha-ching style. Big MONEY MONEY pulsing text, dollar/
+coin confetti raining (rendered via canvas-confetti, which paints reliably
+unlike body-level fixed DIVs on this page)."""
+import json, os, urllib.request, websocket
+
+JS = r"""
+(async () => {
+  console.log('[money] starting');
+  if (!window.__confetti_loaded) {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js';
+    document.head.appendChild(s);
+    await new Promise((r, j) => { s.onload = r; s.onerror = j; });
+    window.__confetti_loaded = true;
+  }
+
+  // Always replace styles (don't cache — keeps changes propagating)
+  document.getElementById('__money_styles')?.remove();
+  const css = document.createElement('style'); css.id = '__money_styles';
+  css.textContent = `
+    @keyframes money-flash-gold {
+      0%,100% { background: rgba(255,215,0,0); }
+      30%     { background: rgba(255,215,0,0.45); }
+      60%     { background: rgba(255,180,0,0.30); }
+    }
+    @keyframes money-text-pulse {
+      0%   { transform: translate(-50%,-50%) scale(0)    rotate(-15deg); opacity: 0; }
+      15%  { transform: translate(-50%,-50%) scale(1.3)  rotate(8deg);   opacity: 1; }
+      30%  { transform: translate(-50%,-50%) scale(0.95) rotate(-3deg);  opacity: 1; }
+      45%  { transform: translate(-50%,-50%) scale(1.15) rotate(2deg);   opacity: 1; }
+      60%  { transform: translate(-50%,-50%) scale(1.05) rotate(0);      opacity: 1; }
+      100% { transform: translate(-50%,-50%) scale(1.05) rotate(0);      opacity: 1; }
+    }
+    @keyframes money-text-cha {
+      0%,100% { transform: translate(-50%,-50%) scale(1.05); }
+      50%     { transform: translate(-50%,-50%) scale(1.18); }
+    }
+    @keyframes money-text-out {
+      0%   { transform: translate(-50%,-50%) scale(1.05); opacity: 1; }
+      100% { transform: translate(-50%,-50%) scale(2);    opacity: 0; }
+    }
+    .money-flash {
+      position: fixed; inset: 0; pointer-events: none; z-index: 2147483636;
+      animation: money-flash-gold 1s ease-in-out 5;
+    }
+    .money-text {
+      position: fixed; left: 50%; top: 50%;
+      font-family: -apple-system, system-ui, sans-serif;
+      font-weight: 900; pointer-events: none; z-index: 2147483646;
+      letter-spacing: 0.04em;
+      white-space: nowrap; text-align: center;
+      /* font-size set in JS via measure-and-shrink */
+      background: linear-gradient(180deg, #fff8dc 0%, #ffd700 38%, #ff8c00 70%, #b8860b 100%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      text-shadow: 0 0 50px rgba(255,215,0,0.9);
+      filter: drop-shadow(0 6px 18px rgba(0,0,0,0.6));
+      animation: money-text-pulse 0.6s cubic-bezier(.4,1.6,.4,1) forwards,
+                 money-text-cha 0.45s ease-in-out 0.6s 8;
+    }
+    .money-text.out { animation: money-text-out 0.6s ease-out forwards; }
+    @keyframes money-counter-in {
+      0%   { transform: translate(-50%,-50%) scale(0); opacity: 0; }
+      60%  { transform: translate(-50%,-50%) scale(1.15); opacity: 1; }
+      100% { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+    }
+    .money-counter {
+      position: fixed; left: 50%; top: 68%;
+      font-family: 'Courier New', ui-monospace, monospace;
+      font-weight: 900;
+      color: #fff8dc;
+      text-shadow: 0 0 30px rgba(255,215,0,0.95), 0 4px 10px rgba(0,0,0,0.7);
+      background: rgba(0,0,0,0.55);
+      padding: 0.18em 0.5em;
+      border: 5px solid #ffd700;
+      border-radius: 14px;
+      white-space: nowrap; pointer-events: none;
+      z-index: 2147483645;
+      animation: money-counter-in 0.5s cubic-bezier(.4,1.6,.4,1) forwards;
+    }
+    @keyframes money-cash-pop {
+      0%   { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    .money-cash-stack {
+      position: fixed; pointer-events: none;
+      z-index: 2147483640;
+      animation: money-cash-pop 0.3s ease-out forwards;
+    }
+  `;
+  document.head.appendChild(css);
+
+  // Gold flash overlay
+  const flash = document.createElement('div'); flash.className = 'money-flash';
+  document.body.appendChild(flash);
+  setTimeout(() => flash.remove(), 5500);
+
+  // Big MONEY MONEY text in middle, sized to fit within 92% of viewport width
+  const text = document.createElement('div'); text.className = 'money-text';
+  text.textContent = 'MONEY  MONEY';
+  document.body.appendChild(text);
+  // Measure-and-shrink: never trust vw/vmin to fit on this rotated kiosk
+  const maxW = Math.floor(innerWidth * 0.92);
+  let fs = Math.floor(innerWidth * 0.13);   // start big
+  text.style.fontSize = fs + 'px';
+  while (text.scrollWidth > maxW && fs > 24) {
+    fs = Math.floor(fs * 0.93);
+    text.style.fontSize = fs + 'px';
+  }
+  console.log('[money] text sized to', fs, 'px, width', text.scrollWidth, 'of max', maxW);
+  setTimeout(() => text.classList.add('out'), 4800);
+  setTimeout(() => text.remove(), 5500);
+
+  // Live counter $0 → big number with ease-out, sized to fit
+  const counter = document.createElement('div');
+  counter.className = 'money-counter';
+  counter.textContent = '$0';
+  document.body.appendChild(counter);
+  // Size for final value (so the box doesn't pop later)
+  const target = 1234567 + Math.floor(Math.random() * 8765432);  // 1.2M-10M random feel
+  const finalText = '$' + target.toLocaleString();
+  counter.textContent = finalText;
+  let cfs = Math.floor(innerWidth * 0.13);
+  counter.style.fontSize = cfs + 'px';
+  while (counter.scrollWidth > innerWidth * 0.92 && cfs > 24) {
+    cfs = Math.floor(cfs * 0.94);
+    counter.style.fontSize = cfs + 'px';
+  }
+  counter.textContent = '$0';
+  console.log('[money] counter target', target, 'fs', cfs);
+  const counterStart = Date.now();
+  const counterDur = 4200;
+  (function counterTick() {
+    const elapsed = Date.now() - counterStart;
+    if (elapsed >= counterDur) {
+      counter.textContent = finalText;
+      return;
+    }
+    const t = elapsed / counterDur;
+    const eased = 1 - Math.pow(1 - t, 3);  // ease-out cubic
+    const v = Math.floor(target * eased);
+    counter.textContent = '$' + v.toLocaleString();
+    requestAnimationFrame(counterTick);
+  })();
+  setTimeout(() => counter.remove(), 5500);
+
+  // Cash pile growing at the bottom — emoji bills accumulate over 4s
+  const pile = [];
+  let pileIdx = 0;
+  const pileTimer = setInterval(() => {
+    if (pileIdx >= 70) { clearInterval(pileTimer); return; }
+    const item = document.createElement('div');
+    item.className = 'money-cash-stack';
+    item.textContent = ['💵','💵','💰','💵','🪙','💵','💸'][Math.floor(Math.random()*7)];
+    item.style.left = (Math.random() * 95) + 'vw';
+    item.style.bottom = (Math.random() * 16) + 'vh';
+    item.style.fontSize = (50 + Math.random() * 40) + 'px';
+    item.style.transform = 'rotate(' + (Math.random() * 70 - 35) + 'deg)';
+    document.body.appendChild(item);
+    pile.push(item);
+    pileIdx++;
+  }, 65);
+  setTimeout(() => clearInterval(pileTimer), 4500);
+  setTimeout(() => pile.forEach(p => p.remove()), 6000);
+
+  // Plain confetti, gold tones — default shapes paint reliably (custom
+  // shapeFromText sometimes silently fails on this Brave/Linux build)
+  const goldColors = ['#ffd700','#ff8c00','#fff8dc','#b8860b','#daa520','#ffe55c','#ffaa33'];
+  const end = Date.now() + 5500;
+  (function rain() {
+    confetti({
+      particleCount: 18,
+      angle: 270,
+      spread: 50,
+      startVelocity: 30,
+      gravity: 1.3,
+      ticks: 280,
+      origin: { x: Math.random(), y: -0.05 },
+      colors: goldColors,
+      scalar: 1.6,
+    });
+    if (Date.now() < end) setTimeout(rain, 70);
+  })();
+  // Cha-ching side cannons at 0, 0.4, 0.8, 1.2, 1.6, 2.0s
+  [0, 400, 800, 1200, 1600, 2000].forEach(t => setTimeout(() => {
+    confetti({ particleCount: 80, angle: 60,  spread: 75, startVelocity: 75, origin: { x: 0, y: 0.75 }, colors: goldColors, scalar: 1.3 });
+    confetti({ particleCount: 80, angle: 120, spread: 75, startVelocity: 75, origin: { x: 1, y: 0.75 }, colors: goldColors, scalar: 1.3 });
+  }, t));
+  // Big center burst when text lands
+  setTimeout(() => {
+    confetti({ particleCount: 250, spread: 180, startVelocity: 60, origin: { y: 0.5 }, colors: goldColors, scalar: 1.6 });
+  }, 200);
+  console.log('[money] rain + cannons launched');
+
+  // === Audio: rapid cha-ching loop + coin clinks ===
+  if (!__MUTED__) try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const bus = ctx.createGain(); bus.gain.value = 1.0;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 6;
+    comp.attack.value = 0.003; comp.release.value = 0.2;
+    const master = ctx.createGain(); master.gain.value = 1.0;
+    bus.connect(comp).connect(master).connect(ctx.destination);
+
+    // Cha-ching x 6 — bell + cash drawer thunk on each beat
+    const kaChing = (t) => {
+      [2400, 3200, 4000].forEach((f, i) => {
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+        const g = ctx.createGain();
+        const t0 = ctx.currentTime + t + i * 0.02;
+        g.gain.setValueAtTime(0, t0);
+        g.gain.linearRampToValueAtTime(0.3, t0 + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.45);
+        o.connect(g).connect(bus); o.start(t0); o.stop(t0 + 0.5);
+      });
+      // drawer thunk
+      const dur = 0.13;
+      const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const filt = ctx.createBiquadFilter(); filt.type = 'bandpass'; filt.frequency.value = 5000; filt.Q.value = 3;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.4, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + dur);
+      src.connect(filt).connect(g).connect(bus); src.start(ctx.currentTime + t);
+    };
+    [0.0, 0.5, 1.0, 1.5, 2.0, 2.5].forEach(kaChing);
+
+    // Coin clinks 2.5 - 5s (random high pings)
+    for (let t = 2.5; t < 5; t += 0.10 + Math.random() * 0.08) {
+      const o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.value = 2000 + Math.random() * 2500;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, ctx.currentTime + t);
+      g.gain.linearRampToValueAtTime(0.22, ctx.currentTime + t + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.15);
+      o.connect(g).connect(bus); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.2);
+    }
+  } catch (e) { console.error('[money] audio failed:', e); }
+
+  return 'money';
+})()
+"""
+
+def main():
+    tabs = json.loads(urllib.request.urlopen('http://127.0.0.1:9222/json').read())
+    page = next((t for t in tabs if t.get('type') == 'page'), None)
+    if not page: print('no page'); return 1
+    ws = websocket.create_connection(page['webSocketDebuggerUrl'], timeout=5)
+    js = JS.replace('__MUTED__', 'true' if os.path.exists('/etc/kiosk-mute') else 'false')
+    ws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate',
+        'params': {'expression': js, 'awaitPromise': True, 'returnByValue': True}}))
+    resp = json.loads(ws.recv())
+    if resp.get('result', {}).get('result', {}).get('value') == 'money':
+        print('💰💵🪙'); return 0
+    print('unexpected:', resp); return 1
+
+if __name__ == '__main__':
+    raise SystemExit(main())

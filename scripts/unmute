@@ -1,0 +1,4 @@
+#!/bin/bash
+# Re-enable audio on celebrate/easy/money/walkup.
+rm -f /etc/kiosk-mute
+echo "🔊 unmuted"

@@ -238,6 +238,7 @@ exec /usr/bin/brave-browser \
   --remote-debugging-port=9222 \
   --remote-debugging-address=127.0.0.1 \
   --remote-allow-origins=* \
+  --autoplay-policy=no-user-gesture-required \
   "$KIOSK_URL"
 SCRIPT
   chmod +x /usr/local/bin/kiosk-launch.sh
@@ -370,6 +371,19 @@ WantedBy=timers.target
 EOF
 }
 
+phase_celebrations() {
+  log "Installing celebrate / easy / money / walkup commands + audio asset"
+  apt-get install -y --no-install-recommends python3-websocket >/dev/null
+  local repo_raw="https://raw.githubusercontent.com/raylu-dev/tv-kiosk/main"
+  for cmd in celebrate easy money walkup mute unmute kiosk-console-recorder.py; do
+    curl -fsSL "$repo_raw/scripts/$cmd" -o "/usr/local/bin/$cmd"
+    chmod +x "/usr/local/bin/$cmd"
+  done
+  curl -fsSL "$repo_raw/assets/easy.mp3" -o /opt/easy.mp3
+  # Default to muted until operator unmutes — visuals always run, audio gated
+  touch /etc/kiosk-mute
+}
+
 phase_periodic_reload() {
   log "Installing 30-min page-refresh timer (so dashboard changes propagate)"
   cat > /etc/systemd/system/kiosk-reload.service <<'EOF'
@@ -481,6 +495,7 @@ main() {
   phase_weston_config
   phase_kiosk_service
   phase_watchdog
+  phase_celebrations
   phase_periodic_reload
   phase_nightly_reboot
   phase_sshd

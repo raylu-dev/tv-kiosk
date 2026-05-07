@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""Triggers a WILD celebration on the kiosk: confetti, emoji rain, fireworks,
+rainbow banner, screen shake — and a beefy 6-second synthesized fanfare
+(brass, drums, cymbals, bells) routed through a master compressor.
+Injects JS into the running Brave page via the devtools websocket."""
+import json, os
+import urllib.request
+import websocket
+
+CELEBRATE_JS = r"""
+(async () => {
+  if (!window.__confetti_loaded) {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js';
+    document.head.appendChild(s);
+    await new Promise((r, j) => { s.onload = r; s.onerror = j; });
+    window.__confetti_loaded = true;
+  }
+
+  const styleId = '__celebrate_styles';
+  if (!document.getElementById(styleId)) {
+    const css = document.createElement('style');
+    css.id = styleId;
+    css.textContent = `
+      @keyframes celebrate-shake {
+        0%,100% { transform: translate(0,0) rotate(0); }
+        10% { transform: translate(-12px,-8px) rotate(-1deg); }
+        20% { transform: translate(10px,6px) rotate(1deg); }
+        30% { transform: translate(-8px,10px) rotate(-1deg); }
+        40% { transform: translate(12px,-6px) rotate(1deg); }
+        50% { transform: translate(-10px,8px) rotate(-1deg); }
+        60% { transform: translate(8px,-10px) rotate(1deg); }
+        70% { transform: translate(-12px,6px) rotate(-1deg); }
+        80% { transform: translate(10px,-8px) rotate(1deg); }
+        90% { transform: translate(-6px,10px) rotate(-1deg); }
+      }
+      @keyframes celebrate-rainbow-flash {
+        0%   { background: rgba(255,0,80,0); }
+        15%  { background: rgba(255,50,50,0.35); }
+        30%  { background: rgba(255,200,0,0.35); }
+        45%  { background: rgba(0,220,80,0.35); }
+        60%  { background: rgba(0,180,255,0.35); }
+        75%  { background: rgba(160,0,255,0.35); }
+        100% { background: rgba(255,0,80,0); }
+      }
+      @keyframes celebrate-fall {
+        0%   { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+        100% { transform: translateY(110vh) rotate(720deg); opacity: 1; }
+      }
+      @keyframes celebrate-banner {
+        0%   { transform: translate(-50%,-50%) scale(0) rotate(-30deg); opacity: 0; }
+        20%  { transform: translate(-50%,-50%) scale(1.2) rotate(5deg); opacity: 1; }
+        50%  { transform: translate(-50%,-50%) scale(1) rotate(-3deg); opacity: 1; }
+        100% { transform: translate(-50%,-50%) scale(1.5) rotate(10deg); opacity: 0; }
+      }
+      .celebrate-shake { animation: celebrate-shake 0.6s ease-in-out 3; }
+      .celebrate-emoji {
+        position: fixed; top: 0; font-size: 60px; pointer-events: none;
+        animation: celebrate-fall linear forwards; z-index: 999998;
+      }
+      .celebrate-flash {
+        position: fixed; inset: 0; pointer-events: none; z-index: 999997;
+        animation: celebrate-rainbow-flash 0.8s ease-out 4;
+      }
+      .celebrate-banner {
+        position: fixed; left: 50%; top: 50%; pointer-events: none; z-index: 999999;
+        font-family: -apple-system, system-ui, sans-serif;
+        font-size: 12vw; font-weight: 900;
+        background: linear-gradient(90deg, #ff0080,#ff8c00,#ffd700,#00cc66,#00aaff,#aa00ff,#ff0080);
+        background-size: 200% 100%;
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        animation: celebrate-banner 3.5s cubic-bezier(.2,.9,.2,1) forwards;
+        text-shadow: 0 0 30px rgba(255,255,255,0.5);
+        white-space: nowrap;
+      }
+    `;
+    document.head.appendChild(css);
+  }
+
+  // Banner
+  const banner = document.createElement('div');
+  banner.className = 'celebrate-banner';
+  banner.textContent = '🎉 LET\'S GOOOO 🎉';
+  document.body.appendChild(banner);
+  setTimeout(() => banner.remove(), 4000);
+
+  // Flash
+  const flash = document.createElement('div');
+  flash.className = 'celebrate-flash';
+  document.body.appendChild(flash);
+  setTimeout(() => flash.remove(), 3500);
+
+  // Shake
+  document.documentElement.classList.add('celebrate-shake');
+  setTimeout(() => document.documentElement.classList.remove('celebrate-shake'), 1900);
+
+  // Emoji rain
+  const emojis = ['🎉','🎊','🥳','🎁','✨','🚀','💜','🌟','💃','🕺','🪩','🎆','🎇','🦄'];
+  for (let i = 0; i < 80; i++) {
+    const e = document.createElement('div');
+    e.className = 'celebrate-emoji';
+    e.textContent = emojis[Math.floor(Math.random()*emojis.length)];
+    e.style.left = (Math.random()*100) + 'vw';
+    e.style.animationDuration = (2+Math.random()*4) + 's';
+    e.style.animationDelay = (Math.random()*3) + 's';
+    e.style.fontSize = (40+Math.random()*60) + 'px';
+    document.body.appendChild(e);
+    setTimeout(() => e.remove(), 7000);
+  }
+
+  // Confetti
+  const end = Date.now() + 6000;
+  (function frame() {
+    confetti({ particleCount: 8, angle: 60, spread: 70, startVelocity: 65, origin: { x: 0, y: 1 }, colors: ['#ff0080','#ff8c00','#ffd700','#00cc66','#00aaff','#aa00ff'] });
+    confetti({ particleCount: 8, angle: 120, spread: 70, startVelocity: 65, origin: { x: 1, y: 1 }, colors: ['#ff0080','#ff8c00','#ffd700','#00cc66','#00aaff','#aa00ff'] });
+    if (Date.now() < end) requestAnimationFrame(frame);
+  })();
+  const fwInterval = setInterval(() => {
+    confetti({
+      particleCount: 100, spread: 360, startVelocity: 35,
+      origin: { x: Math.random(), y: Math.random()*0.6 },
+      colors: ['#ff0080','#ff8c00','#ffd700','#00cc66','#00aaff','#aa00ff','#ffffff'],
+      scalar: 1.2, ticks: 200,
+    });
+  }, 350);
+  setTimeout(() => clearInterval(fwInterval), 5000);
+  confetti({ particleCount: 300, spread: 160, startVelocity: 55, origin: { y: 0.5 }, scalar: 1.4 });
+
+  // === BIG SOUND: 6-second multi-layered fanfare ===
+  if (!__MUTED__) try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // Master chain: bus → compressor → master gain → speakers
+    const bus = ctx.createGain();
+    bus.gain.value = 1.0;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -18;
+    comp.knee.value = 12;
+    comp.ratio.value = 6;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.25;
+    const master = ctx.createGain();
+    master.gain.value = 0.95;
+    bus.connect(comp).connect(master).connect(ctx.destination);
+
+    const NOTE = (n) => 440 * Math.pow(2, (n - 69) / 12);  // MIDI → Hz
+    // Brass note: stack of saw oscillators (slightly detuned), low-pass envelope
+    const brass = (midi, t, dur, vel = 0.8) => {
+      const f = NOTE(midi);
+      [-7, 0, 7].forEach(detune => {
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = f;
+        osc.detune.value = detune;
+        const filt = ctx.createBiquadFilter();
+        filt.type = 'lowpass';
+        filt.Q.value = 4;
+        filt.frequency.setValueAtTime(800, ctx.currentTime + t);
+        filt.frequency.linearRampToValueAtTime(3500, ctx.currentTime + t + 0.05);
+        filt.frequency.exponentialRampToValueAtTime(700, ctx.currentTime + t + dur);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0, ctx.currentTime + t);
+        g.gain.linearRampToValueAtTime(0.18 * vel, ctx.currentTime + t + 0.025);
+        g.gain.linearRampToValueAtTime(0.13 * vel, ctx.currentTime + t + 0.15);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + dur);
+        osc.connect(filt).connect(g).connect(bus);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + dur + 0.05);
+      });
+    };
+    // Bell-like sine on top
+    const bell = (midi, t, dur, vel = 0.5) => {
+      const f = NOTE(midi);
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, ctx.currentTime + t);
+      g.gain.linearRampToValueAtTime(0.3 * vel, ctx.currentTime + t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + dur);
+      osc.connect(g).connect(bus);
+      osc.start(ctx.currentTime + t);
+      osc.stop(ctx.currentTime + t + dur + 0.05);
+    };
+    // Drum: filtered white noise burst
+    const drum = (t, freq, dur, vel = 0.7) => {
+      const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'bandpass';
+      filt.frequency.value = freq;
+      filt.Q.value = 2;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.5 * vel, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + dur);
+      src.connect(filt).connect(g).connect(bus);
+      src.start(ctx.currentTime + t);
+    };
+    // Cymbal: high-passed noise with long decay
+    const cymbal = (t, vel = 0.6) => {
+      const dur = 1.2;
+      const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'highpass';
+      filt.frequency.value = 6000;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.45 * vel, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + dur);
+      src.connect(filt).connect(g).connect(bus);
+      src.start(ctx.currentTime + t);
+    };
+    // Kick: low sine with quick pitch drop
+    const kick = (t, vel = 0.9) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(120, ctx.currentTime + t);
+      osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + t + 0.12);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.7 * vel, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.25);
+      osc.connect(g).connect(bus);
+      osc.start(ctx.currentTime + t);
+      osc.stop(ctx.currentTime + t + 0.3);
+    };
+
+    // === Arrangement (6s) ===
+    // 0.00s: BIG IMPACT — kick + cymbal + huge brass C major triad
+    cymbal(0.00, 1.0);
+    kick(0.00);
+    [60, 64, 67, 72].forEach(m => brass(m, 0.00, 1.4));     // C major
+    [72, 76, 79].forEach(m => bell(m, 0.00, 2.0));
+
+    // 0.45s: ascending fanfare
+    [{m:67,t:0.45},{m:72,t:0.60},{m:76,t:0.75},{m:79,t:0.90}].forEach(({m,t}) => {
+      brass(m, t, 0.4, 0.9);
+      bell(m+12, t, 0.6, 0.6);
+    });
+    drum(0.55, 200, 0.15);
+    drum(0.85, 200, 0.15);
+
+    // 1.4s: F major chord + kick
+    kick(1.40);
+    [65, 69, 72, 77].forEach(m => brass(m, 1.40, 0.8));
+    cymbal(1.40, 0.5);
+
+    // 2.0s: G major + snare
+    kick(2.00);
+    drum(2.00, 220, 0.15, 0.9);
+    [67, 71, 74, 79].forEach(m => brass(m, 2.00, 0.8));
+
+    // 2.6s: triumphant C major octave higher
+    cymbal(2.60, 0.8);
+    kick(2.60);
+    [72, 76, 79, 84].forEach(m => brass(m, 2.60, 1.4));
+    [84, 88, 91].forEach(m => bell(m, 2.60, 1.2));
+
+    // 3.5s: descending pickup
+    [{m:79,t:3.50},{m:76,t:3.65},{m:72,t:3.80}].forEach(({m,t}) => brass(m, t, 0.3, 0.8));
+
+    // 4.0s: BIG FINAL CHORD — C major spanning multiple octaves
+    cymbal(4.00, 1.0);
+    kick(4.00);
+    [48, 55, 60, 64, 67, 72, 76, 79, 84].forEach(m => brass(m, 4.00, 2.0, 0.9));
+    [76, 79, 84, 88].forEach(m => bell(m, 4.00, 2.5, 0.7));
+
+    // 5.0s: extra cymbals + snare rolls for the tail
+    cymbal(5.00, 0.7);
+    drum(5.10, 250, 0.1, 0.6);
+    drum(5.30, 250, 0.1, 0.6);
+    drum(5.50, 250, 0.1, 0.6);
+    cymbal(5.70, 0.5);
+  } catch (e) { console.error('audio:', e); }
+
+  return 'celebrated';
+})()
+"""
+
+def main():
+    tabs = json.loads(urllib.request.urlopen('http://127.0.0.1:9222/json').read())
+    page = next((t for t in tabs if t.get('type') == 'page'), None)
+    if not page:
+        print('no page tab found'); return 1
+    ws = websocket.create_connection(page['webSocketDebuggerUrl'], timeout=5)
+    js = CELEBRATE_JS.replace('__MUTED__', 'true' if os.path.exists('/etc/kiosk-mute') else 'false')
+    ws.send(json.dumps({
+        'id': 1,
+        'method': 'Runtime.evaluate',
+        'params': {'expression': js, 'awaitPromise': True, 'returnByValue': True},
+    }))
+    resp = json.loads(ws.recv())
+    if resp.get('result', {}).get('result', {}).get('value') == 'celebrated':
+        print('🎉🎊🥳')
+        return 0
+    print('unexpected:', resp); return 1
+
+if __name__ == '__main__':
+    raise SystemExit(main())

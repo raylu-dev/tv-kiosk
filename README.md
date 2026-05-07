@@ -60,6 +60,30 @@ ssh kiosk@tv-kiosk
 
 You're done.
 
+## Celebration commands
+
+Six commands installed on the kiosk for triggering visual + audio celebrations from anywhere on the tailnet (e.g. wired into Slack later). Each is a Python script that injects JS into the running Brave page via the devtools port — no page reload, no service restart.
+
+| Command | Effect |
+|---|---|
+| `celebrate` | Confetti rain + emoji rain + rainbow banner + 6-sec synthesized fanfare |
+| `easy` | Big red EASY button presses, camera flash, paparazzi mini-flashes, BOOM starburst sticker, "THAT WAS EASY" with ElevenLabs voice |
+| `money` | "MONEY MONEY" gold text, gold confetti rain + side cannons, live counter scrolling $0 → ~$1-10M, cash pile building at the bottom, ka-ching synth |
+| `walkup <url-or-path> [name]` | Stadium spotlights + sweeping stage lights + announcer text + plays the audio you give it |
+| `mute` | Touches `/etc/kiosk-mute` — all four celebrations go silent (visuals still run) |
+| `unmute` | Removes the flag — sound returns |
+
+Default state is muted until operator unmutes.
+
+Trigger from anywhere on the tailnet:
+```bash
+ssh root@tv-kiosk celebrate
+ssh root@tv-kiosk easy
+ssh root@tv-kiosk money
+ssh root@tv-kiosk walkup "https://example.com/song.mp3" "Joe Smith"
+ssh root@tv-kiosk unmute    # turn audio on first
+```
+
 ## Day-to-day
 
 | What | How |

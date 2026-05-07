@@ -1,0 +1,4 @@
+#!/bin/bash
+# Suppress audio on celebrate/easy/money/walkup. Visuals still run.
+touch /etc/kiosk-mute
+echo "🔇 muted (audio suppressed for celebrate/easy/money/walkup)"
