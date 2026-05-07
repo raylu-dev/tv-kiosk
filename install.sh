@@ -91,6 +91,30 @@ phase_hostname() {
   hostnamectl set-hostname "$KIOSK_HOSTNAME"
 }
 
+phase_wol() {
+  log "Enabling Wake-on-LAN on the wired interface"
+  # Find the wired netplan config + first ethernet interface, set wakeonlan: true.
+  # The NIC supports WoL but Ubuntu's default netplan leaves it disabled, which
+  # leaves the PHY unpowered after shutdown — magic packets go nowhere.
+  local netplan_file
+  netplan_file="$(ls /etc/netplan/*.yaml 2>/dev/null | head -1)"
+  [ -z "$netplan_file" ] && { log "no netplan file found, skipping WoL"; return 0; }
+  python3 - "$netplan_file" <<'PY'
+import sys, yaml
+path = sys.argv[1]
+with open(path) as f: cfg = yaml.safe_load(f) or {}
+ethernets = cfg.setdefault('network', {}).setdefault('ethernets', {})
+if not ethernets:
+    print("no ethernet entries in netplan, skipping", flush=True); sys.exit(0)
+for iface, conf in ethernets.items():
+    if isinstance(conf, dict):
+        conf['wakeonlan'] = True
+with open(path, 'w') as f: yaml.safe_dump(cfg, f, default_flow_style=False)
+PY
+  chmod 600 "$netplan_file"
+  netplan apply || true
+}
+
 phase_emmc_preserve() {
   log "Configuring eMMC-friendly storage"
   mkdir -p /etc/systemd/journald.conf.d
@@ -402,6 +426,7 @@ main() {
   phase_brave_policies
   phase_user
   phase_hostname
+  phase_wol
   phase_emmc_preserve
   phase_unattended_upgrades
   phase_kiosk_url
