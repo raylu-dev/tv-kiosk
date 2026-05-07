@@ -1,10 +1,30 @@
 #!/usr/bin/env python3
-"""Force-clear any celebration overlay still on the kiosk page. Useful when
-a long-running celebration (like walkup) didn't clean up on its own."""
+"""Force-clear any celebration overlay AND kill all celebration audio.
+Useful when a long-running celebration didn't clean up on its own,
+or you just want to bail out of whatever's playing."""
 import json, urllib.request, websocket
 
 JS = r"""
 (() => {
+  let audioStopped = 0;
+
+  // 1. Run every registered teardown (Audio.pause, AudioContext.close, ...)
+  if (Array.isArray(window.__rayluTeardown)) {
+    for (const fn of window.__rayluTeardown) {
+      try { fn(); audioStopped++; } catch (e) {}
+    }
+    window.__rayluTeardown = [];
+  }
+
+  // 2. Backstop: pause any <audio> still in the DOM (Audio() ctors aren't, but defensive)
+  document.querySelectorAll('audio').forEach(a => {
+    try { a.pause(); a.src = ''; audioStopped++; } catch (e) {}
+  });
+
+  // 3. Cancel any speech synthesis (TTS used to be in `easy`)
+  try { window.speechSynthesis?.cancel(); } catch (e) {}
+
+  // 4. Remove all known celebration DOM
   const SELECTORS = [
     '.walkup-bg', '.walkup-light', '.walkup-strobe', '.walkup-name',
     '.walkup-spotlight', '.walkup-subtitle', '.walkup-track',
@@ -13,11 +33,11 @@ JS = r"""
     '.money-flash', '.money-text', '.money-counter', '.money-cash-stack',
     '.money-slot', '.money-jackpot', '.money-coin', '.money-bill',
   ].join(',');
-  const removed = document.querySelectorAll(SELECTORS).length;
-  document.querySelectorAll(SELECTORS).forEach(e => e.remove());
+  const els = document.querySelectorAll(SELECTORS);
+  els.forEach(e => e.remove());
   document.querySelectorAll('#__walkup_styles, #__money_styles, #__easy_styles').forEach(e => e.remove());
-  // Stop any orphaned <audio> elements playing in JS land (they aren't in the DOM)
-  return JSON.stringify({removed});
+
+  return JSON.stringify({elementsRemoved: els.length, audioStopped});
 })()
 """
 
@@ -32,7 +52,7 @@ def main():
     resp = json.loads(ws.recv())
     val = resp.get('result', {}).get('result', {}).get('value', '{}')
     info = json.loads(val) if isinstance(val, str) else val
-    print(f'🧹 cleared {info.get("removed", 0)} celebration elements')
+    print(f'🧹 cleared {info.get("elementsRemoved", 0)} elements, killed {info.get("audioStopped", 0)} audio sources')
     return 0
 
 if __name__ == '__main__':

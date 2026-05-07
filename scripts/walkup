@@ -201,6 +201,9 @@ def main():
         audio = new Audio(SRC);
         audio.volume = 1.0;
         audio.play().catch(e => console.error('[walkup] audio play failed:', e));
+        // Register so /raylu reset can kill it
+        window.__rayluTeardown = window.__rayluTeardown || [];
+        window.__rayluTeardown.push(() => { try { audio.pause(); audio.src = ''; } catch (e) {} });
       }
 
       let cleanedUp = false;

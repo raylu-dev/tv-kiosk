@@ -199,6 +199,8 @@ JS = r"""
   // === Audio: rapid cha-ching loop + coin clinks ===
   if (!__MUTED__) try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    window.__rayluTeardown = window.__rayluTeardown || [];
+    window.__rayluTeardown.push(() => { try { ctx.close(); } catch (e) {} });
     const bus = ctx.createGain(); bus.gain.value = 1.0;
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 6;

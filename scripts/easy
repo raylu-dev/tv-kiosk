@@ -145,6 +145,8 @@ def main():
         audio = new Audio(__AUDIO__);
         audio.volume = 1.0;
         audio.play().catch(e => console.error('[easy] audio play failed:', e));
+        window.__rayluTeardown = window.__rayluTeardown || [];
+        window.__rayluTeardown.push(() => { try { audio.pause(); audio.src = ''; } catch (e) {} });
       }
 
       setTimeout(() => {

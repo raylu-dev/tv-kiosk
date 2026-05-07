@@ -133,6 +133,8 @@ CELEBRATE_JS = r"""
   // === BIG SOUND: 6-second multi-layered fanfare ===
   if (!__MUTED__) try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    window.__rayluTeardown = window.__rayluTeardown || [];
+    window.__rayluTeardown.push(() => { try { ctx.close(); } catch (e) {} });
 
     // Master chain: bus → compressor → master gain → speakers
     const bus = ctx.createGain();
