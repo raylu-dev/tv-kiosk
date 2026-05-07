@@ -27,6 +27,9 @@ KIOSK_USER="${KIOSK_USER:-kiosk}"
 # weston transform values: normal, rotate-90 (90°CW), rotate-180, rotate-270 (90°CCW).
 # Default rotate-90 matches our office TV (mounted vertically, bottom-on-left as you face it).
 KIOSK_TRANSFORM="${KIOSK_TRANSFORM:-rotate-90}"
+# Output mode. Default 1080p@60 because most 4K TVs over HDMI 2.0 cap at
+# 4K@30Hz, which makes animations feel choppy. The TV upscales 1080p cleanly.
+KIOSK_MODE="${KIOSK_MODE:-1920x1080@60}"
 WATCHDOG_WEBHOOK="${WATCHDOG_WEBHOOK:-}"
 
 [[ $EUID -eq 0 ]] || { echo "must run as root (use sudo)"; exit 1; }
@@ -190,6 +193,11 @@ idle-time=0
 
 [output]
 name=DP-3
+# 1080p@60Hz instead of native 4K@30Hz: TV's max 4K refresh is 30Hz, which
+# makes animations feel choppy. The TV upscales 1080p to 4K cleanly, and
+# 60Hz feels visibly smoother. Override with KIOSK_MODE if your TV supports
+# 4K@60Hz on the input you're using.
+mode=${KIOSK_MODE:-1920x1080@60}
 transform=${KIOSK_TRANSFORM}
 
 [autolaunch]
