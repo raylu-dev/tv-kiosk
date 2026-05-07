@@ -125,6 +125,83 @@ sudo du -shx /var/* 2>/dev/null | sort -h | tail
 
 Likely culprit: someone added a side job that writes logs to `/var/log` without rotation. Add log rotation or redirect to journald.
 
+## Slack bot (`/raylu`)
+
+The kiosk runs a Slack bot via Socket Mode (no public endpoint). Anyone in the workspace can fire celebrations from any channel or DM.
+
+```
+/raylu list                          # show all available celebrations
+/raylu celebrate
+/raylu easy
+/raylu money
+/raylu walkup <youtube-url> [name]
+/raylu reset                         # force-clear stuck overlay
+```
+
+Replies are ephemeral (only the invoker sees them) so channels stay clean.
+
+### Architecture
+- `/etc/raylu-slackbot.env` — `SLACK_BOT_TOKEN` (xoxb-…) + `SLACK_APP_TOKEN` (xapp-…), chmod 600
+- `/etc/raylu-celebrations.json` — registry of `name → {description, binary, progress_message?}`
+- `/usr/local/bin/raylu-slackbot.py` — slack_bolt + Socket Mode handler
+- `raylu-slackbot.service` — systemd unit, auto-restart, logs to journald
+- Concurrency: `flock` on `/run/raylu-celebration.lock` — only one celebration runs at a time
+
+The bot reloads the registry on every command — no restart needed when you add a new celebration to the JSON.
+
+### Add a new celebration
+
+1. Drop the script in `scripts/` of the repo, make it executable
+2. Add an entry to `scripts/raylu-celebrations.json`:
+   ```json
+   "yourthing": {
+     "description": "🎯 What it does",
+     "binary": "/usr/local/bin/yourthing",
+     "progress_message": "optional immediate-ack message for long-running ones"
+   }
+   ```
+3. Commit + push
+4. On the kiosk: `curl -fsSL <repo-raw>/scripts/yourthing -o /usr/local/bin/yourthing && chmod +x /usr/local/bin/yourthing && curl -fsSL <repo-raw>/scripts/raylu-celebrations.json -o /etc/raylu-celebrations.json`
+5. Try it: `/raylu yourthing`
+
+No bot restart needed.
+
+### Mute / unmute (developer-only, NOT in Slack)
+
+The audio mute flag is a developer command, not exposed to Slack:
+
+```bash
+ssh root@tv-kiosk mute       # /etc/kiosk-mute touched, all audio suppressed
+ssh root@tv-kiosk unmute
+```
+
+Default after a fresh install is muted.
+
+### Bot logs / debugging
+
+```bash
+ssh root@tv-kiosk 'journalctl -u raylu-slackbot -n 100 --no-pager'
+ssh root@tv-kiosk 'journalctl -u raylu-slackbot -f'   # live tail
+```
+
+The bot logs every command with the Slack user + channel, so "who fired what" is traceable.
+
+### Rotate Slack tokens
+
+If a token leaks (always rotate after pasting into a chat transcript):
+
+1. https://api.slack.com/apps → Raylu TV → **Basic Information** → "Regenerate" buttons
+2. `ssh root@tv-kiosk` → edit `/etc/raylu-slackbot.env` with the new tokens
+3. `systemctl restart raylu-slackbot`
+
+### Disable the bot
+
+```bash
+ssh root@tv-kiosk 'systemctl disable --now raylu-slackbot'
+```
+
+`/raylu` commands will fail (Slack will say "the app didn't respond"). To re-enable: `systemctl enable --now raylu-slackbot`.
+
 ## TV settings (per device, do once)
 
 After mounting:

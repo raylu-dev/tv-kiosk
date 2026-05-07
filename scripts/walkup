@@ -91,6 +91,11 @@ def main():
 
     js = r"""
     (async () => {
+      // Defensive: clear any leftover celebration DOM from a prior run that
+      // might not have cleaned itself up. Cheap belt-and-suspenders.
+      document.querySelectorAll(
+        '.walkup-bg, .walkup-light, .walkup-strobe, .walkup-name, .walkup-spotlight, .walkup-subtitle, .walkup-track'
+      ).forEach(e => e.remove());
       document.getElementById('__walkup_styles')?.remove();
       const css = document.createElement('style'); css.id = '__walkup_styles';
       css.textContent = `
@@ -198,19 +203,44 @@ def main():
         audio.play().catch(e => console.error('[walkup] audio play failed:', e));
       }
 
+      let cleanedUp = false;
       const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
         [bg, l1, l2, l3, sp, strobe, sub, name].forEach(el => el.remove());
-        if (audio) audio.pause();
+        if (audio) { try { audio.pause(); audio.src = ''; } catch (e) {} }
+        clearInterval(watchdog);
+        console.log('[walkup] cleanup');
       };
+
       if (audio) {
         audio.addEventListener('ended', cleanup);
         audio.addEventListener('error', () => { console.error('[walkup] audio error'); cleanup(); });
-        // Safety net: visuals always end by VISUAL_MS even if 'ended' never fires
-        setTimeout(cleanup, VISUAL_MS);
-      } else {
-        // Muted run — no audio, give a fixed visual run
-        setTimeout(cleanup, Math.min(VISUAL_MS, 12000));
       }
+      // Hard safety net based on yt-dlp-reported duration
+      setTimeout(cleanup, audio ? VISUAL_MS : Math.min(VISUAL_MS, 12000));
+
+      // Watchdog: 'ended' is unreliable for data: URLs in this Brave/Linux build.
+      // Poll the audio's currentTime every second; if it stops advancing AND
+      // we're past the duration (or 90% of it), force cleanup.
+      let lastTime = -1, stuckTicks = 0;
+      const watchdog = setInterval(() => {
+        if (cleanedUp || !audio) { clearInterval(watchdog); return; }
+        const t = audio.currentTime;
+        const d = audio.duration;
+        if (t === lastTime) {
+          stuckTicks++;
+        } else {
+          stuckTicks = 0;
+          lastTime = t;
+        }
+        // 3 consecutive seconds of no time advance, and either ended flag set
+        // or we're past 90% of the known duration → clean up.
+        if (stuckTicks >= 3 && (audio.ended || (d && t >= d * 0.9))) {
+          console.log('[walkup] watchdog: audio stuck and near/past end, cleaning up');
+          cleanup();
+        }
+      }, 1000);
 
       return 'walkup';
     })()

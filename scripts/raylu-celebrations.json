@@ -1,0 +1,23 @@
+{
+  "celebrate": {
+    "description": "🎉 Confetti rain + emoji rain + 6-sec fanfare",
+    "binary": "/usr/local/bin/celebrate"
+  },
+  "easy": {
+    "description": "🟥 Big red EASY button + camera flash + voice line",
+    "binary": "/usr/local/bin/easy"
+  },
+  "money": {
+    "description": "💰 Gold rain + cash pile + counter scrolling to $1M+",
+    "binary": "/usr/local/bin/money"
+  },
+  "walkup": {
+    "description": "🎤 Walk-up song. Usage: walkup <youtube-url> [name]",
+    "binary": "/usr/local/bin/walkup",
+    "progress_message": "🎤 downloading audio… (5–15 sec)"
+  },
+  "reset": {
+    "description": "🧹 Force-clear stuck celebration overlay (in case one didn't clean up)",
+    "binary": "/usr/local/bin/reset"
+  }
+}

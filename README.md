@@ -69,19 +69,29 @@ Six commands installed on the kiosk for triggering visual + audio celebrations f
 | `celebrate` | Confetti rain + emoji rain + rainbow banner + 6-sec synthesized fanfare |
 | `easy` | Big red EASY button presses, camera flash, paparazzi mini-flashes, BOOM starburst sticker, "THAT WAS EASY" with ElevenLabs voice |
 | `money` | "MONEY MONEY" gold text, gold confetti rain + side cannons, live counter scrolling $0 → ~$1-10M, cash pile building at the bottom, ka-ching synth |
-| `walkup <url-or-path> [name]` | Stadium spotlights + sweeping stage lights + announcer text + plays the audio you give it |
-| `mute` | Touches `/etc/kiosk-mute` — all four celebrations go silent (visuals still run) |
-| `unmute` | Removes the flag — sound returns |
+| `walkup <youtube-url> [name]` | Stadium spotlights + sweeping stage lights + announcer text + plays the YouTube audio (yt-dlp extracts on the fly) |
+| `reset` | Force-clear any stuck celebration overlay |
+| `mute` / `unmute` | Developer-only — toggle audio for celebrations (default: muted) |
+
+These are also exposed to Slack via the `/raylu` slash command — see runbook for details. Mute/unmute is intentionally *not* in Slack (developer-only).
 
 Default state is muted until operator unmutes.
 
-Trigger from anywhere on the tailnet:
+Trigger from Slack (anyone in the workspace, any channel or DM):
+```
+/raylu celebrate
+/raylu easy
+/raylu money
+/raylu walkup https://www.youtube.com/watch?v=... Joe Smith
+/raylu list
+```
+
+Or directly via SSH for ops:
 ```bash
 ssh root@tv-kiosk celebrate
-ssh root@tv-kiosk easy
-ssh root@tv-kiosk money
-ssh root@tv-kiosk walkup "https://example.com/song.mp3" "Joe Smith"
-ssh root@tv-kiosk unmute    # turn audio on first
+ssh root@tv-kiosk walkup "https://www.youtube.com/watch?v=..." "Joe Smith"
+ssh root@tv-kiosk reset      # force-clear stuck overlay
+ssh root@tv-kiosk unmute     # developer-only: turn audio on
 ```
 
 ## Day-to-day

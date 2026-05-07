@@ -372,16 +372,40 @@ EOF
 }
 
 phase_celebrations() {
-  log "Installing celebrate / easy / money / walkup commands + audio asset"
-  apt-get install -y --no-install-recommends python3-websocket >/dev/null
+  log "Installing celebrate / easy / money / walkup / reset commands + audio asset"
+  apt-get install -y --no-install-recommends python3-websocket python3-pip ffmpeg >/dev/null
+  pip install --break-system-packages --upgrade yt-dlp slack-bolt >/dev/null 2>&1 || true
   local repo_raw="https://raw.githubusercontent.com/raylu-dev/tv-kiosk/main"
-  for cmd in celebrate easy money walkup mute unmute kiosk-console-recorder.py; do
+  for cmd in celebrate easy money walkup reset mute unmute kiosk-console-recorder.py; do
     curl -fsSL "$repo_raw/scripts/$cmd" -o "/usr/local/bin/$cmd"
     chmod +x "/usr/local/bin/$cmd"
   done
   curl -fsSL "$repo_raw/assets/easy.mp3" -o /opt/easy.mp3
   # Default to muted until operator unmutes — visuals always run, audio gated
   touch /etc/kiosk-mute
+}
+
+phase_slackbot() {
+  log "Installing raylu-tv Slack bot (Socket Mode)"
+  local repo_raw="https://raw.githubusercontent.com/raylu-dev/tv-kiosk/main"
+  curl -fsSL "$repo_raw/scripts/raylu-slackbot.py" -o /usr/local/bin/raylu-slackbot.py
+  curl -fsSL "$repo_raw/scripts/raylu-celebrations.json" -o /etc/raylu-celebrations.json
+  curl -fsSL "$repo_raw/scripts/raylu-slackbot.service" -o /etc/systemd/system/raylu-slackbot.service
+  chmod +x /usr/local/bin/raylu-slackbot.py
+  chmod 644 /etc/raylu-celebrations.json
+  if [ ! -f /etc/raylu-slackbot.env ]; then
+    cat > /etc/raylu-slackbot.env <<EOF
+# Tokens for the Slack app at api.slack.com/apps (raylu-tv)
+# Both required. Rotate via the Slack dashboard if exposed.
+SLACK_APP_TOKEN=
+SLACK_BOT_TOKEN=
+EOF
+    chmod 600 /etc/raylu-slackbot.env
+    log "Created /etc/raylu-slackbot.env stub — fill in tokens, then: systemctl enable --now raylu-slackbot"
+  else
+    systemctl daemon-reload
+    systemctl enable --now raylu-slackbot.service
+  fi
 }
 
 phase_periodic_reload() {
@@ -496,6 +520,7 @@ main() {
   phase_kiosk_service
   phase_watchdog
   phase_celebrations
+  phase_slackbot
   phase_periodic_reload
   phase_nightly_reboot
   phase_sshd

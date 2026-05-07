@@ -16,6 +16,10 @@ def main():
     js = r"""
     (async () => {
       console.log('[easy] starting');
+      // Defensive: clear any leftover overlay from any prior celebration
+      document.querySelectorAll(
+        '.walkup-bg, .walkup-light, .walkup-strobe, .walkup-name, .walkup-spotlight, .walkup-subtitle, .walkup-track, .easy-overlay, .easy-button, .easy-text, .easy-flash, .easy-mini-flash, .easy-boom, .easy-ripple, .easy-sparkle, .money-flash, .money-text, .money-counter, .money-cash-stack'
+      ).forEach(e => e.remove());
       const styleId = '__easy_styles';
       if (!document.getElementById(styleId)) {
         const css = document.createElement('style'); css.id = styleId;
