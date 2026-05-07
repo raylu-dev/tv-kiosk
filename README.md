@@ -79,7 +79,7 @@ url file:  /etc/kiosk-url.env
 restart:   sudo systemctl restart kiosk
 reboot:    sudo reboot
 logs:      journalctl -u kiosk -n 200
-mac:       __:__:__:__:__:__     (fill in after BIOS)
+mac:       b4:45:06:49:d7:1b
 repo:      github.com/raylu-dev/tv-kiosk
 ```
 
