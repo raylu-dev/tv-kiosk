@@ -1,167 +1,239 @@
 #!/usr/bin/env python3
-"""Walk-up song celebration: stadium spotlights + plays a song.
+"""Walk-up song celebration. Downloads a YouTube (or any yt-dlp-supported) URL
+in real time and plays the whole song with stadium-spotlight visuals running
+for the full duration.
 
 Usage:
-  walkup <url-or-path>              # plays the audio with default name
-  walkup <url-or-path> "Joe Smith"  # adds an announcer name
-"""
-import base64, json, mimetypes, os, sys, urllib.request, websocket
+  walkup <url> [announcer-name]
+  walkup /local/path.mp3 [announcer-name]    # local file also works (instant)
+  walkup https://example.com/file.mp3 [name] # direct audio URL also works
 
-def audio_src(arg):
-    if arg.startswith('http://') or arg.startswith('https://'):
-        return arg
+There is unavoidable ~5–15s of latency before visuals start while yt-dlp
+extracts audio. After download, audio + animation start together and the
+animation lasts as long as the song does."""
+import base64, json, mimetypes, os, subprocess, sys, tempfile, urllib.request, websocket
+
+
+def is_audio_url(url):
+    return any(url.lower().endswith(ext) for ext in ('.mp3', '.m4a', '.ogg', '.wav'))
+
+
+def download_with_ytdlp(url):
+    """Returns (path, duration_seconds) for a downloaded MP3. Uses a temp file
+    we'll clean up after the audio is read into a data URL."""
+    tmpd = tempfile.mkdtemp(prefix='walkup-')
+    out_tpl = os.path.join(tmpd, 'song.%(ext)s')
+    print(f'⬇ extracting audio: {url}', file=sys.stderr)
+    cmd = ['yt-dlp', '-x', '--audio-format', 'mp3', '-f', 'bestaudio',
+           '--no-playlist', '--print', 'after_move:%(duration)s',
+           '-o', out_tpl, url]
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=120)
+    except subprocess.CalledProcessError as e:
+        print(f'yt-dlp failed:\n{e.output.decode(errors="replace")}', file=sys.stderr)
+        return None, None
+    except subprocess.TimeoutExpired:
+        print('yt-dlp timed out (>2 min)', file=sys.stderr)
+        return None, None
+    # last non-empty line is the duration we asked for
+    duration = None
+    for line in out.decode(errors='replace').strip().splitlines()[::-1]:
+        line = line.strip()
+        if line and line[0].isdigit():
+            try: duration = float(line); break
+            except ValueError: pass
+    mp3 = next((os.path.join(tmpd, f) for f in os.listdir(tmpd) if f.endswith('.mp3')), None)
+    if not mp3:
+        print('no mp3 produced', file=sys.stderr); return None, None
+    return mp3, duration
+
+
+def resolve_audio(arg):
+    """Returns (audio_data_url_or_url, duration_seconds_or_None, label)."""
+    # Local file
     if os.path.exists(arg):
         mime, _ = mimetypes.guess_type(arg)
         mime = mime or 'audio/mpeg'
         with open(arg, 'rb') as f:
-            return f'data:{mime};base64,' + base64.b64encode(f.read()).decode()
-    return None
+            return ('data:' + mime + ';base64,' + base64.b64encode(f.read()).decode(),
+                    None, os.path.basename(arg))
+    # Direct audio URL — pass straight through (browser streams it)
+    if (arg.startswith('http://') or arg.startswith('https://')) and is_audio_url(arg):
+        return arg, None, arg
+    # YouTube / anything yt-dlp supports
+    if arg.startswith('http://') or arg.startswith('https://'):
+        path, duration = download_with_ytdlp(arg)
+        if not path: return None, None, None
+        size_mb = os.path.getsize(path) / 1024 / 1024
+        print(f'   {duration:.0f}s, {size_mb:.1f} MB', file=sys.stderr)
+        with open(path, 'rb') as f:
+            data_url = 'data:audio/mpeg;base64,' + base64.b64encode(f.read()).decode()
+        try: os.remove(path); os.rmdir(os.path.dirname(path))
+        except Exception: pass
+        return data_url, duration, arg
+    print(f'not a URL or existing file: {arg}', file=sys.stderr)
+    return None, None, None
+
 
 def main():
     if len(sys.argv) < 2:
-        print('usage: walkup <url-or-path> ["announcer name"]'); return 1
-    src = audio_src(sys.argv[1])
-    if not src:
-        print(f'not a URL and not an existing file: {sys.argv[1]}'); return 1
+        print('usage: walkup <url> [announcer-name]'); return 1
+    arg = sys.argv[1]
     name = sys.argv[2] if len(sys.argv) > 2 else 'RAYLU ENGINEER'
+    src, duration, label = resolve_audio(arg)
+    if not src: return 1
+    muted = os.path.exists('/etc/kiosk-mute')
+
+    # Tell brave how long to keep visuals up. yt-dlp told us the duration; for
+    # direct/local files we don't know, so we rely on the 'ended' event with a
+    # generous 10-min safety net.
+    visual_ms = int((duration or 600) * 1000) + 2000
 
     js = r"""
     (async () => {
-      const styleId = '__walkup_styles';
-      if (!document.getElementById(styleId)) {
-        const css = document.createElement('style'); css.id = styleId;
-        css.textContent = `
-          @keyframes walkup-spotlight {
-            0%   { transform: translate(-50%,-50%) scale(0.5); opacity: 0; }
-            10%  { transform: translate(-50%,-50%) scale(1); opacity: 1; }
-            100% { transform: translate(-50%,-50%) scale(1); opacity: 1; }
-          }
-          @keyframes walkup-strobe {
-            0%   { background: rgba(255,0,80,0); }
-            25%  { background: rgba(255,0,80,0.25); }
-            50%  { background: rgba(0,180,255,0.25); }
-            75%  { background: rgba(255,200,0,0.25); }
-            100% { background: rgba(255,0,80,0); }
-          }
-          @keyframes walkup-name-in {
-            0%   { transform: translate(-50%,-50%) scale(0) rotate(-15deg); opacity: 0; }
-            30%  { transform: translate(-50%,-50%) scale(1.2) rotate(3deg); opacity: 1; }
-            100% { transform: translate(-50%,-50%) scale(1) rotate(-1deg); opacity: 1; }
-          }
-          @keyframes walkup-light-sweep {
-            0% { transform: rotate(-30deg); }
-            50% { transform: rotate(30deg); }
-            100% { transform: rotate(-30deg); }
-          }
-          .walkup-bg {
-            position: fixed; inset: 0; pointer-events: none; z-index: 999996;
-            background: radial-gradient(circle at center, rgba(0,0,0,0.7), rgba(0,0,0,0.95));
-          }
-          .walkup-spotlight {
-            position: fixed; left: 50%; top: 50%;
-            width: 80vmin; height: 80vmin; pointer-events: none; z-index: 999997;
-            background: radial-gradient(circle, rgba(255,255,200,0.5) 0%, rgba(255,255,200,0.2) 30%, transparent 70%);
-            animation: walkup-spotlight 0.8s ease-out forwards;
-          }
-          .walkup-light {
-            position: fixed; top: -20vh; pointer-events: none; z-index: 999997;
-            width: 0; height: 0;
-            border-left: 30vw solid transparent;
-            border-right: 30vw solid transparent;
-            transform-origin: 50% 0;
-            opacity: 0.4;
-          }
-          .walkup-light-1 { left: 15%; border-top: 100vh solid rgba(255,80,80,0.3); animation: walkup-light-sweep 2.5s ease-in-out infinite; }
-          .walkup-light-2 { left: 50%; transform: translateX(-50%); border-top: 100vh solid rgba(80,200,255,0.3); animation: walkup-light-sweep 3s ease-in-out infinite reverse; }
-          .walkup-light-3 { right: 15%; border-top: 100vh solid rgba(255,255,80,0.3); animation: walkup-light-sweep 2.7s ease-in-out infinite; }
-          .walkup-strobe {
-            position: fixed; inset: 0; pointer-events: none; z-index: 999998;
-            animation: walkup-strobe 1.5s linear infinite;
-          }
-          .walkup-name {
-            position: fixed; left: 50%; top: 50%; pointer-events: none; z-index: 999999;
-            font-family: -apple-system, system-ui, sans-serif;
-            font-size: 7vw; font-weight: 900;
-            background: linear-gradient(180deg, #fff 0%, #ffd700 50%, #ff8c00 100%);
-            -webkit-background-clip: text; background-clip: text; color: transparent;
-            text-shadow: 0 0 30px rgba(255,215,0,0.8);
-            white-space: nowrap; text-align: center;
-            animation: walkup-name-in 0.8s cubic-bezier(.4,1.5,.4,1) forwards;
-          }
-          .walkup-subtitle {
-            position: fixed; left: 50%; top: 38%;
-            transform: translate(-50%, -50%);
-            font-family: -apple-system, system-ui, sans-serif;
-            font-size: 3vw; font-weight: 700; color: white;
-            text-shadow: 0 0 20px rgba(255,255,255,0.5);
-            pointer-events: none; z-index: 999999;
-            opacity: 0; transition: opacity 0.5s ease-out;
-          }
-          .walkup-subtitle.show { opacity: 1; }
-        `;
-        document.head.appendChild(css);
-      }
+      document.getElementById('__walkup_styles')?.remove();
+      const css = document.createElement('style'); css.id = '__walkup_styles';
+      css.textContent = `
+        @keyframes walkup-spotlight {
+          0%   { transform: translate(-50%,-50%) scale(0.5); opacity: 0; }
+          10%  { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+          100% { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+        }
+        @keyframes walkup-strobe {
+          0%   { background: rgba(255,0,80,0); }
+          25%  { background: rgba(255,0,80,0.25); }
+          50%  { background: rgba(0,180,255,0.25); }
+          75%  { background: rgba(255,200,0,0.25); }
+          100% { background: rgba(255,0,80,0); }
+        }
+        @keyframes walkup-name-in {
+          0%   { transform: translate(-50%,-50%) scale(0) rotate(-15deg); opacity: 0; }
+          30%  { transform: translate(-50%,-50%) scale(1.2) rotate(3deg); opacity: 1; }
+          100% { transform: translate(-50%,-50%) scale(1) rotate(-1deg); opacity: 1; }
+        }
+        @keyframes walkup-light-sweep {
+          0%   { transform: rotate(-30deg); }
+          50%  { transform: rotate(30deg); }
+          100% { transform: rotate(-30deg); }
+        }
+        .walkup-bg {
+          position: fixed; inset: 0; pointer-events: none; z-index: 2147483636;
+          background: radial-gradient(circle at center, rgba(0,0,0,0.7), rgba(0,0,0,0.95));
+        }
+        .walkup-spotlight {
+          position: fixed; left: 50%; top: 50%;
+          width: 80vmin; height: 80vmin; pointer-events: none; z-index: 2147483637;
+          background: radial-gradient(circle, rgba(255,255,200,0.5) 0%, rgba(255,255,200,0.2) 30%, transparent 70%);
+          animation: walkup-spotlight 0.8s ease-out forwards;
+        }
+        .walkup-light {
+          position: fixed; top: -20vh; pointer-events: none; z-index: 2147483637;
+          width: 0; height: 0;
+          border-left: 30vw solid transparent;
+          border-right: 30vw solid transparent;
+          transform-origin: 50% 0;
+          opacity: 0.4;
+        }
+        .walkup-light-1 { left: 15%; border-top: 100vh solid rgba(255,80,80,0.3); animation: walkup-light-sweep 2.5s ease-in-out infinite; }
+        .walkup-light-2 { left: 50%; transform: translateX(-50%); border-top: 100vh solid rgba(80,200,255,0.3); animation: walkup-light-sweep 3s ease-in-out infinite reverse; }
+        .walkup-light-3 { right: 15%; border-top: 100vh solid rgba(255,255,80,0.3); animation: walkup-light-sweep 2.7s ease-in-out infinite; }
+        .walkup-strobe {
+          position: fixed; inset: 0; pointer-events: none; z-index: 2147483638;
+          animation: walkup-strobe 1.5s linear infinite;
+        }
+        .walkup-name {
+          position: fixed; left: 50%; top: 50%; pointer-events: none; z-index: 2147483645;
+          font-family: -apple-system, system-ui, sans-serif;
+          font-weight: 900;
+          background: linear-gradient(180deg, #fff 0%, #ffd700 50%, #ff8c00 100%);
+          -webkit-background-clip: text; background-clip: text; color: transparent;
+          text-shadow: 0 0 30px rgba(255,215,0,0.8);
+          white-space: nowrap; text-align: center;
+          animation: walkup-name-in 0.8s cubic-bezier(.4,1.5,.4,1) forwards;
+        }
+        .walkup-subtitle {
+          position: fixed; left: 50%; top: 38%;
+          transform: translate(-50%, -50%);
+          font-family: -apple-system, system-ui, sans-serif;
+          font-weight: 700; color: white;
+          text-shadow: 0 0 20px rgba(255,255,255,0.5);
+          pointer-events: none; z-index: 2147483645;
+          opacity: 0; transition: opacity 0.5s ease-out;
+          white-space: nowrap; text-align: center;
+        }
+        .walkup-subtitle.show { opacity: 1; }
+      `;
+      document.head.appendChild(css);
 
       const NAME = __NAME__;
       const SRC = __SRC__;
+      const VISUAL_MS = __VISUAL_MS__;
 
-      // Stadium dim background
       const bg = document.createElement('div'); bg.className = 'walkup-bg';
-      // Sweeping stage lights
       const l1 = document.createElement('div'); l1.className = 'walkup-light walkup-light-1';
       const l2 = document.createElement('div'); l2.className = 'walkup-light walkup-light-2';
       const l3 = document.createElement('div'); l3.className = 'walkup-light walkup-light-3';
-      // Spotlight on the player
       const sp = document.createElement('div'); sp.className = 'walkup-spotlight';
-      // Strobe overlay
       const strobe = document.createElement('div'); strobe.className = 'walkup-strobe';
-      // Subtitle "NOW UP"
       const sub = document.createElement('div'); sub.className = 'walkup-subtitle';
       sub.textContent = '🎤 NOW UP 🎤';
-      // Name
       const name = document.createElement('div'); name.className = 'walkup-name';
       name.textContent = NAME;
       document.body.append(bg, l1, l2, l3, sp, strobe, sub, name);
+
+      // Measure-and-shrink: name fits within 90% of viewport width
+      let nfs = Math.floor(innerWidth * 0.10);
+      name.style.fontSize = nfs + 'px';
+      while (name.scrollWidth > innerWidth * 0.90 && nfs > 24) {
+        nfs = Math.floor(nfs * 0.93);
+        name.style.fontSize = nfs + 'px';
+      }
+      sub.style.fontSize = Math.max(20, Math.floor(nfs * 0.4)) + 'px';
       setTimeout(() => sub.classList.add('show'), 100);
 
-      // Audio (skipped in mute mode — visuals still run)
       let audio = null;
-      if (!__MUTED__) {
+      if (!__MUTED__ && SRC) {
         audio = new Audio(SRC);
         audio.volume = 1.0;
-        audio.play().catch(e => console.error('audio play failed:', e));
+        audio.play().catch(e => console.error('[walkup] audio play failed:', e));
       }
 
-      // Cleanup when audio ends, OR after 60s as a safety net
       const cleanup = () => {
         [bg, l1, l2, l3, sp, strobe, sub, name].forEach(el => el.remove());
         if (audio) audio.pause();
       };
       if (audio) {
         audio.addEventListener('ended', cleanup);
-        audio.addEventListener('error', () => { console.error('audio error'); cleanup(); });
-        setTimeout(cleanup, 60000);
+        audio.addEventListener('error', () => { console.error('[walkup] audio error'); cleanup(); });
+        // Safety net: visuals always end by VISUAL_MS even if 'ended' never fires
+        setTimeout(cleanup, VISUAL_MS);
       } else {
-        setTimeout(cleanup, 8000);  // muted: shorter visual run
+        // Muted run — no audio, give a fixed visual run
+        setTimeout(cleanup, Math.min(VISUAL_MS, 12000));
       }
 
       return 'walkup';
     })()
     """
-    js = (js.replace('__NAME__', json.dumps(name))
-            .replace('__SRC__', json.dumps(src))
-            .replace('__MUTED__', 'true' if os.path.exists('/etc/kiosk-mute') else 'false'))
+    js = (js
+          .replace('__NAME__', json.dumps(name))
+          .replace('__SRC__', json.dumps(src))
+          .replace('__VISUAL_MS__', str(visual_ms))
+          .replace('__MUTED__', 'true' if muted else 'false'))
 
     tabs = json.loads(urllib.request.urlopen('http://127.0.0.1:9222/json').read())
     page = next((t for t in tabs if t.get('type') == 'page'), None)
     if not page: print('no page'); return 1
-    ws = websocket.create_connection(page['webSocketDebuggerUrl'], timeout=5)
+    # Audio data URLs are big — bump websocket frame size
+    ws = websocket.create_connection(page['webSocketDebuggerUrl'], timeout=15,
+                                      max_size=64 * 1024 * 1024)
     ws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate',
         'params': {'expression': js, 'awaitPromise': True, 'returnByValue': True}}))
     resp = json.loads(ws.recv())
     if resp.get('result', {}).get('result', {}).get('value') == 'walkup':
         print(f'🎤 {name}'); return 0
     print('unexpected:', resp); return 1
+
 
 if __name__ == '__main__':
     raise SystemExit(main())
