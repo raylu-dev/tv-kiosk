@@ -61,7 +61,10 @@ phase_packages() {
 phase_brave_policies() {
   log "Installing Brave managed policies (disable Rewards/Wallet/News/AI/etc.)"
   install -d -m 0755 /etc/brave/policies/managed
-  cat > /etc/brave/policies/managed/kiosk.json <<'EOF'
+  # Extract origin from KIOSK_URL (https://host/path → https://host/*) for Shields rule
+  local kiosk_origin
+  kiosk_origin="$(echo "$KIOSK_URL" | sed -E 's|^(https?://[^/]+).*|\1|')"
+  cat > /etc/brave/policies/managed/kiosk.json <<EOF
 {
   "BraveRewardsDisabled": true,
   "BraveWalletDisabled": true,
@@ -77,7 +80,8 @@ phase_brave_policies() {
   "DefaultBrowserSettingEnabled": false,
   "MetricsReportingEnabled": false,
   "PromotionalTabsEnabled": false,
-  "BackgroundModeEnabled": false
+  "BackgroundModeEnabled": false,
+  "BraveShieldsDisabledForUrls": ["${kiosk_origin}/*"]
 }
 EOF
 }
@@ -226,10 +230,14 @@ exec /usr/bin/brave-browser \
   --no-default-browser-check \
   --check-for-update-interval=31536000 \
   --incognito \
+  --disable-background-timer-throttling \
+  --disable-backgrounding-occluded-windows \
+  --disable-renderer-backgrounding \
   --disk-cache-dir=/tmp/brave-cache \
   --disk-cache-size=104857600 \
   --remote-debugging-port=9222 \
   --remote-debugging-address=127.0.0.1 \
+  --remote-allow-origins=* \
   "$KIOSK_URL"
 SCRIPT
   chmod +x /usr/local/bin/kiosk-launch.sh
