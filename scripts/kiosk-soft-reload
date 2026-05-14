@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Soft-reload the kiosk page via Chrome DevTools Protocol.
+
+Brave is launched (by kiosk.service / weston) with
+--remote-debugging-port=9222 bound to 127.0.0.1. We open a one-shot
+WebSocket to the page target and send Page.reload. No HDMI signal gap,
+no weston restart, no Fire-TV sleep trigger.
+
+Uses only the Python standard library so the kiosk image stays slim.
+"""
+from __future__ import annotations
+
+import json
+import os
+import socket
+import sys
+import urllib.request
+from base64 import b64encode
+from struct import pack
+
+CDP_HOST = "127.0.0.1"
+CDP_PORT = 9222
+TIMEOUT_S = 5
+
+
+def find_page_ws() -> str:
+    url = f"http://{CDP_HOST}:{CDP_PORT}/json"
+    with urllib.request.urlopen(url, timeout=TIMEOUT_S) as r:
+        targets = json.loads(r.read())
+    for t in targets:
+        if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+            return t["webSocketDebuggerUrl"]
+    raise SystemExit("no page-type CDP target with a webSocketDebuggerUrl")
+
+
+def reload_page(ws_url: str) -> None:
+    prefix = f"ws://{CDP_HOST}:{CDP_PORT}"
+    if not ws_url.startswith(prefix):
+        raise SystemExit(f"unexpected CDP WS URL: {ws_url!r}")
+    path = ws_url[len(prefix):] or "/"
+
+    key = b64encode(os.urandom(16)).decode()
+    handshake = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {CDP_HOST}:{CDP_PORT}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n"
+    ).encode()
+
+    sock = socket.create_connection((CDP_HOST, CDP_PORT), timeout=TIMEOUT_S)
+    sock.sendall(handshake)
+
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise SystemExit("WS handshake closed before headers complete")
+        buf += chunk
+    status_line = buf.split(b"\r\n", 1)[0]
+    if b" 101 " not in status_line:
+        raise SystemExit(f"WS handshake failed: {status_line!r}")
+
+    payload = json.dumps(
+        {"id": 1, "method": "Page.reload", "params": {"ignoreCache": True}}
+    ).encode()
+    mask = os.urandom(4)
+    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+
+    n = len(payload)
+    frame = bytearray([0x81])  # FIN=1, opcode=text
+    if n < 126:
+        frame.append(0x80 | n)
+    elif n < 1 << 16:
+        frame.append(0x80 | 126)
+        frame += pack("!H", n)
+    else:
+        frame.append(0x80 | 127)
+        frame += pack("!Q", n)
+    frame += mask
+    frame += masked
+    sock.sendall(frame)
+    sock.close()
+
+
+def main() -> int:
+    ws = find_page_ws()
+    reload_page(ws)
+    print(f"reloaded {ws}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

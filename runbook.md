@@ -6,7 +6,8 @@ Operational guide for the office TV kiosk. The README covers install. This cover
 
 - **Display stack:** systemd unit `kiosk.service` runs `weston` (Wayland compositor) with `kiosk-shell.so`, which auto-launches `brave-browser --kiosk` via `/usr/local/bin/kiosk-launch.sh`. Config in `/etc/weston/weston.ini`. If Brave crashes, weston exits (`watch=true`), systemd restarts the unit. `systemctl status kiosk` reflects actual display health. Brave is used instead of Chromium because Ubuntu ships Chromium only as a snap. Weston is used instead of cage because Ubuntu's cage 0.1.5 lacks output rotation support.
 - **Watchdog:** `kiosk-watchdog.timer` fires every 5 minutes. Checks origin reachability, chromium devtools, and that the page isn't on a `chrome-error://` screen. One failure → restart kiosk. Two consecutive failures → reboot.
-- **Nightly reboot:** `kiosk-nightly-reboot.timer` reboots at 04:30. Unattended-upgrades runs at 04:00 and may also reboot. Either way, the box gets a fresh start daily.
+- **Periodic refresh:** `kiosk-reload.timer` fires every 90 minutes and runs `/usr/local/bin/kiosk-soft-reload`, which sends a CDP `Page.reload` to Brave on `127.0.0.1:9222`. The page reloads in place — weston keeps running, no HDMI signal gap, so the panel doesn't get a chance to sleep. (Earlier versions of this kiosk did `systemctl restart kiosk.service` every 30 min, which blanked HDMI long enough for the Hisense Fire TV to trip its "no signal" auto-off and never wake up.)
+- **No nightly reboot:** the box does not reboot itself on a schedule. `unattended-upgrades` handles security updates at 04:00 UTC and will reboot if a package requires it (`/etc/apt/apt.conf.d/50unattended-upgrades`). On most nights, no reboot happens at all — same reason as above (HDMI blanks → TV sleeps → doesn't auto-wake).
 - **Resource isolation:** `kiosk.slice` reserves CPU/memory for the display. `sidejobs.slice` caps anything else. Side jobs literally cannot starve the TV.
 - **Access:** Tailscale only. `ssh kiosk@tv-kiosk` from anyone in `group:eng`. UFW denies all incoming except on `tailscale0`. System sshd is key-only, no root, but only reachable through the tailnet.
 - **Storage:** journald is volatile (RAM only, capped at 100M). `/tmp` is tmpfs. Chromium's disk cache lives on tmpfs. The eMMC sees minimal writes.
@@ -69,7 +70,8 @@ wakeonlan <mac>     # from any LAN machine
 2. SSH in: `ssh kiosk@tv-kiosk`. If SSH works, the box is alive — display side is the problem.
 3. `sudo systemctl status kiosk` — running? failed?
 4. `journalctl -u kiosk -n 200` — look for cage or chromium errors.
-5. Hard reset: `sudo reboot`.
+5. **Check the TV itself** before rebooting the box. The Hisense Fire TV sleeps on "no signal" and won't always auto-wake when HDMI returns. Grab the remote, press power, see if the page is already there. If yes → it's the TV's `Auto Power-Off` / `No Signal Auto-Off` settings; set both to *Never*.
+6. Hard reset: `sudo reboot`. Note: this blanks HDMI for ~60 s, which often re-triggers the TV's sleep. Have the remote ready.
 
 ### TV shows "Aw, Snap" or chrome-error page
 
