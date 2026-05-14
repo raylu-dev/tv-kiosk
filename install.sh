@@ -409,52 +409,44 @@ EOF
 }
 
 phase_periodic_reload() {
-  log "Installing 30-min page-refresh timer (so dashboard changes propagate)"
+  log "Installing 90-min CDP soft-reload (page reloads in place, no HDMI flicker)"
+  local repo_raw="https://raw.githubusercontent.com/raylu-dev/tv-kiosk/main"
+  curl -fsSL "$repo_raw/scripts/kiosk-soft-reload" -o /usr/local/bin/kiosk-soft-reload
+  chmod +x /usr/local/bin/kiosk-soft-reload
+
   cat > /etc/systemd/system/kiosk-reload.service <<'EOF'
 [Unit]
-Description=Refresh the kiosk by restarting the kiosk service
+Description=Soft-reload the kiosk page over CDP (no HDMI signal gap)
 
 [Service]
 Type=oneshot
-ExecStart=/bin/systemctl restart kiosk.service
+ExecStart=/usr/local/bin/kiosk-soft-reload
 EOF
 
   cat > /etc/systemd/system/kiosk-reload.timer <<'EOF'
 [Unit]
-Description=Refresh the kiosk page every 30 minutes
+Description=Refresh the kiosk page every 90 minutes
 
 [Timer]
-OnBootSec=30min
-OnUnitActiveSec=30min
+OnBootSec=90min
+OnUnitActiveSec=90min
 Persistent=true
 
 [Install]
 WantedBy=timers.target
 EOF
-}
 
-phase_nightly_reboot() {
-  log "Installing nightly reboot timer (04:30)"
-  cat > /etc/systemd/system/kiosk-nightly-reboot.service <<'EOF'
-[Unit]
-Description=Nightly kiosk reboot
-
-[Service]
-Type=oneshot
-ExecStart=/sbin/reboot
-EOF
-
-  cat > /etc/systemd/system/kiosk-nightly-reboot.timer <<'EOF'
-[Unit]
-Description=Reboot kiosk nightly at 04:30
-
-[Timer]
-OnCalendar=*-*-* 04:30:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
+  # Clean up the old nightly-reboot units if upgrading from a prior install.
+  # Each restart/reboot blanks HDMI long enough for the Hisense Fire TV to
+  # decide there's "no signal" and turn off the panel, so we drop both
+  # the nightly reboot and the hard kiosk.service restart in this version.
+  if systemctl list-unit-files kiosk-nightly-reboot.timer >/dev/null 2>&1; then
+    systemctl disable --now kiosk-nightly-reboot.timer 2>/dev/null || true
+    systemctl disable kiosk-nightly-reboot.service 2>/dev/null || true
+    rm -f /etc/systemd/system/kiosk-nightly-reboot.timer \
+          /etc/systemd/system/kiosk-nightly-reboot.service
+    systemctl daemon-reload
+  fi
 }
 
 phase_sshd() {
@@ -502,7 +494,6 @@ phase_enable() {
   systemctl stop getty@tty1.service 2>/dev/null || true
   systemctl enable kiosk-watchdog.timer
   systemctl enable kiosk-reload.timer
-  systemctl enable kiosk-nightly-reboot.timer
   systemctl enable kiosk.service
 }
 
@@ -522,7 +513,6 @@ main() {
   phase_celebrations
   phase_slackbot
   phase_periodic_reload
-  phase_nightly_reboot
   phase_sshd
   # Tailscale BEFORE ufw lock-down: if anything fails earlier, you can still
   # reach the box on LAN. Once ufw is on, only tailscale0 is reachable.
